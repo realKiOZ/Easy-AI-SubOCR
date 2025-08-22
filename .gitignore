@@ -20,3 +20,4 @@ Thumbs.db
 # Application specific
 settings.json
 app.log
+app_temp/
