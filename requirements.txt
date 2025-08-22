@@ -1,0 +1,5 @@
+google-generativeai
+tqdm
+Pillow
+beautifulsoup4
+lxml
