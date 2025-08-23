@@ -6,11 +6,12 @@ import os
 import logging
 import re
 from src.localization import EN_TRANSLATIONS
+from src.tool_path_manager import get_tool_path
 
 def inspect_video_subtitles(video_path: str) -> tuple[list, str | None]:
     """{docstring}"""
     command = [
-        'ffprobe', '-v', 'quiet', '-print_format', 'json', '-show_streams',
+        get_tool_path('ffprobe'), '-v', 'quiet', '-print_format', 'json', '-show_streams',
         '-select_streams', 's', video_path
     ]
     try:
@@ -45,7 +46,7 @@ def extract_pgs_subtitles(video_path: str, stream_index: int, session_dir: str, 
     track_id = stream_index
     track_spec = f"{track_id}:{sup_file_path}"
     
-    mkvextract_command = ['mkvextract', '--gui-mode', video_path, 'tracks', track_spec]
+    mkvextract_command = [get_tool_path('mkvextract'), '--gui-mode', video_path, 'tracks', track_spec]
     try:
         logging.info(EN_TRANSLATIONS["log_stage1_extracting_raw_stream"])
         creationflags = 0
@@ -122,7 +123,7 @@ def extract_pgs_subtitles(video_path: str, stream_index: int, session_dir: str, 
     if not os.path.exists(bdsup2sub_path):
         return None, None, EN_TRANSLATIONS["error_bdsup2sub_file_not_found"].format(path=bdsup2sub_path)
     
-    java_command = ['java', '-jar', bdsup2sub_path, sup_file_path, '-o', xml_file_path]
+    java_command = [get_tool_path('java'), '-jar', bdsup2sub_path, sup_file_path, '-o', xml_file_path]
     try:
         logging.info(EN_TRANSLATIONS["log_stage2_converting_subtitles"])
         creationflags = 0

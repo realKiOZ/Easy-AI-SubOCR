@@ -3,6 +3,7 @@
 import os
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox, scrolledtext, font
+from tkextrafont import Font
 import threading
 from PIL import Image, ImageTk
 import logging
@@ -44,6 +45,13 @@ class SubtitlePreviewer(tk.Tk):
         
         self.after(100, self.auto_load_models_on_startup)
         self.after(200, self.check_required_tools)
+        
+        try:
+            self.font = Font(file="assets/fonts/NotoSans-Regular.ttf", family="Noto Sans")
+        except Exception as e:
+            logging.error(f"Failed to load font: {e}")
+            messagebox.showerror("Font Error", f"Could not load the Noto Sans font. Please make sure the font file exists at assets/fonts/NotoSans-Regular.ttf.\n\n{e}")
+
 
     def _init_vars(self):
         self.api_key_var = tk.StringVar(value=self.app_context.api_key)
@@ -170,18 +178,10 @@ class SubtitlePreviewer(tk.Tk):
         right_frame.grid_rowconfigure(2, weight=1)
         right_frame.grid_columnconfigure(0, weight=1)
 
-        available_fonts = list(font.families())
-        preferred_fonts = ["Segoe UI", "Yu Gothic UI", "Arial Unicode MS", "Noto Sans", "Tahoma", "Verdana"]
-        selected_font_family = "Arial"
-        for f in preferred_fonts:
-            if f in available_fonts:
-                selected_font_family = f
-                break
-        
         try:
-            self.text_font = font.Font(family=selected_font_family, size=16)
+            self.text_font = font.Font(family="Noto Sans", size=20, weight="bold")
         except tk.TclError:
-            self.text_font = font.Font(family="Arial", size=16)
+            self.text_font = font.Font(family="Arial", size=20, weight="bold")
 
         image_container = ttk.Frame(right_frame)
         image_container.grid(row=0, column=0, sticky="nsew", pady=(0, 5))
@@ -262,8 +262,11 @@ class SubtitlePreviewer(tk.Tk):
         self.progress_bar.stop()
         self._set_controls_state(tk.NORMAL, ocr_running=False, extraction_running=False)
 
+    def update_ocr_progress(self, message):
+        logging.info(message)
+
     def run_ocr_and_update_gui(self):
-        subtitles, message = self.app_context.run_ocr_pipeline(self.cancellation_event)
+        subtitles, message = self.app_context.run_ocr_pipeline(self.cancellation_event, self.update_ocr_progress)
         self.progress_bar.stop()
         if subtitles:
             self.ocr_completed = True

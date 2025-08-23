@@ -3,3 +3,4 @@ tqdm
 Pillow
 beautifulsoup4
 lxml
+tkextrafont

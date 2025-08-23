@@ -178,7 +178,7 @@ class AppContext:
             logging.error(EN_TRANSLATIONS["log_timing_file_read_error_corrupt_empty"])
             return None, EN_TRANSLATIONS["log_timing_file_read_error_corrupt_empty"]
 
-    def run_ocr_pipeline(self, cancellation_event: threading.Event) -> tuple[list | None, str]:
+    def run_ocr_pipeline(self, cancellation_event: threading.Event, progress_callback=None) -> tuple[list | None, str]:
         """Runs the OCR pipeline."""
         if not all([self.api_key, self.model_name, self.timing_file_path, self.image_folder, self.current_session_dir]):
             return None, EN_TRANSLATIONS["error_ocr_config_missing"]
@@ -202,7 +202,8 @@ class AppContext:
             self.batch_size,
             self.max_retries,
             current_ocr_prompt,
-            cancellation_event # Pass the cancellation event
+            cancellation_event, # Pass the cancellation event
+            progress_callback
         )
         if subtitles:
             self.subtitles = subtitles

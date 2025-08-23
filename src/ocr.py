@@ -95,7 +95,7 @@ def process_batch_with_gemini(batch_of_events, image_folder, log_folder, model, 
     except Exception as e:
         return None, EN_TRANSLATIONS["error_unknown_api_call_json_parse"].format(error=e)
 
-def run_ocr_pipeline(timing_file_path: str, image_folder: str, log_folder: str, api_key: str, model_name: str, generation_config: dict, safety_settings: list, batch_size: int, max_retries: int, ocr_prompt: str, cancellation_event: threading.Event) -> tuple[list | None, str]:
+def run_ocr_pipeline(timing_file_path: str, image_folder: str, log_folder: str, api_key: str, model_name: str, generation_config: dict, safety_settings: list, batch_size: int, max_retries: int, ocr_prompt: str, cancellation_event: threading.Event, progress_callback=None) -> tuple[list | None, str]:
     logging.info(EN_TRANSLATIONS["log_starting_ocr_process"])
     try:
         logging.info(EN_TRANSLATIONS["log_configuring_model"].format(model_name=model_name))
@@ -115,9 +115,14 @@ def run_ocr_pipeline(timing_file_path: str, image_folder: str, log_folder: str, 
         return None, EN_TRANSLATIONS["log_timing_file_read_error_corrupt_empty"]
 
     failed_batches = []
-    for i in tqdm(range(0, len(subtitles), batch_size), desc="OCR Batches"):
+    total_batches = (len(subtitles) + batch_size - 1) // batch_size
+    for i in tqdm(range(0, len(subtitles), batch_size), desc="OCR Batches", total=total_batches):
         if cancellation_event.is_set():
             return None, EN_TRANSLATIONS["status_ocr_cancelled"]
+
+        if progress_callback:
+            progress_percentage = (i // batch_size) / total_batches * 100
+            progress_callback(f"OCR Batches: {i//batch_size}/{total_batches} ({progress_percentage:.0f}%)")
 
         batch = subtitles[i:i + batch_size]
         results = None

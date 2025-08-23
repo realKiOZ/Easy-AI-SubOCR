@@ -21,3 +21,8 @@ Thumbs.db
 settings.json
 app.log
 app_temp/
+
+# Distribution / packaging
+build/
+dist/
+*.egg-info/
