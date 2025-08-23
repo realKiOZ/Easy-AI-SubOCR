@@ -8,6 +8,7 @@ from tqdm import tqdm
 import time
 import re
 import logging
+import threading
 
 from src.utils import parse_bdsup2sub_xml, parse_subtitle_edit_html
 from src.settings import save_settings, load_settings
@@ -94,7 +95,7 @@ def process_batch_with_gemini(batch_of_events, image_folder, log_folder, model, 
     except Exception as e:
         return None, EN_TRANSLATIONS["error_unknown_api_call_json_parse"].format(error=e)
 
-def run_ocr_pipeline(timing_file_path: str, image_folder: str, log_folder: str, api_key: str, model_name: str, generation_config: dict, safety_settings: list, batch_size: int, max_retries: int, ocr_prompt: str) -> tuple[list | None, str]:
+def run_ocr_pipeline(timing_file_path: str, image_folder: str, log_folder: str, api_key: str, model_name: str, generation_config: dict, safety_settings: list, batch_size: int, max_retries: int, ocr_prompt: str, cancellation_event: threading.Event) -> tuple[list | None, str]:
     logging.info(EN_TRANSLATIONS["log_starting_ocr_process"])
     try:
         logging.info(EN_TRANSLATIONS["log_configuring_model"].format(model_name=model_name))
@@ -115,10 +116,16 @@ def run_ocr_pipeline(timing_file_path: str, image_folder: str, log_folder: str, 
 
     failed_batches = []
     for i in tqdm(range(0, len(subtitles), batch_size), desc="OCR Batches"):
+        if cancellation_event.is_set():
+            return None, EN_TRANSLATIONS["status_ocr_cancelled"]
+
         batch = subtitles[i:i + batch_size]
         results = None
         error_message = ""
         for attempt in range(max_retries):
+            if cancellation_event.is_set():
+                return None, EN_TRANSLATIONS["status_ocr_cancelled"]
+            
             results, error_message = process_batch_with_gemini(
                 batch, image_folder, log_folder, model, 
                 batch_start_index=i, 

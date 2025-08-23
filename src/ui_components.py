@@ -9,6 +9,7 @@ class SubtitleSelectionDialog(tk.Toplevel):
         super().__init__(parent)
         self.title(EN_TRANSLATIONS["select_subtitle_stream_dialog_title"])
         self.geometry("400x300")
+        self._center_dialog(400, 300)
         self.transient(parent)
         self.grab_set()
         self.selected_stream_index = None
@@ -19,8 +20,27 @@ class SubtitleSelectionDialog(tk.Toplevel):
             self.listbox.insert(tk.END, stream['info'])
         self.listbox.pack(pady=5, padx=10, fill=tk.BOTH, expand=True)
         if streams: self.listbox.selection_set(0)
-        ok_button = ttk.Button(self, text=EN_TRANSLATIONS["ok_button"], command=self.on_ok)
-        ok_button.pack(pady=10)
+
+        button_frame = ttk.Frame(self)
+        button_frame.pack(pady=10)
+
+        ok_button = ttk.Button(button_frame, text=EN_TRANSLATIONS["ok_button"], command=self.on_ok)
+        ok_button.pack(side=tk.LEFT, padx=5)
+
+        cancel_button = ttk.Button(button_frame, text=EN_TRANSLATIONS["cancel_button"], command=self.destroy)
+        cancel_button.pack(side=tk.RIGHT, padx=5)
+
+    def _center_dialog(self, width, height):
+        self.update_idletasks()
+        parent_x = self.master.winfo_x()
+        parent_y = self.master.winfo_y()
+        parent_width = self.master.winfo_width()
+        parent_height = self.master.winfo_height()
+
+        x = parent_x + (parent_width // 2) - (width // 2)
+        y = parent_y + (parent_height // 2) - (height // 2)
+        self.geometry(f'{width}x{height}+{x}+{y}')
+
     def on_ok(self):
         selection = self.listbox.curselection()
         if selection: self.selected_stream_index = selection[0]
@@ -31,6 +51,7 @@ class SessionSelectionDialog(tk.Toplevel):
         super().__init__(parent)
         self.title(EN_TRANSLATIONS["select_session_dialog_title"])
         self.geometry("500x400")
+        self._center_dialog(500, 400)
         self.transient(parent)
         self.grab_set()
         self.selected_session = None
@@ -41,8 +62,16 @@ class SessionSelectionDialog(tk.Toplevel):
             self.listbox.insert(tk.END, session)
         self.listbox.pack(pady=5, padx=10, fill=tk.BOTH, expand=True)
         if sessions: self.listbox.selection_set(0)
-        ok_button = ttk.Button(self, text=EN_TRANSLATIONS["ok_button"], command=self.on_ok)
-        ok_button.pack(pady=10)
+        
+        button_frame = ttk.Frame(self)
+        button_frame.pack(pady=10)
+
+        ok_button = ttk.Button(button_frame, text=EN_TRANSLATIONS["ok_button"], command=self.on_ok)
+        ok_button.pack(side=tk.LEFT, padx=5)
+
+        cancel_button = ttk.Button(button_frame, text=EN_TRANSLATIONS["cancel_button"], command=self.destroy)
+        cancel_button.pack(side=tk.RIGHT, padx=5)
+        
     def on_ok(self):
         selection = self.listbox.curselection()
         if selection:

@@ -32,8 +32,9 @@ class SubtitlePreviewer(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title(EN_TRANSLATIONS["app_title"])
-        self.geometry("1100x800")
-        self.minsize(1100, 800)
+        self.geometry("1100x900")
+        self.minsize(1100, 900)
+        self._center_window(1100, 900)
         
         self.app_context = AppContext()
         self._init_vars()
@@ -55,6 +56,8 @@ class SubtitlePreviewer(tk.Tk):
         self.temp_display_var = tk.StringVar(value=f"{self.temp_var.get():.2f}")
         self.topp_display_var = tk.StringVar(value=f"{self.topp_var.get():.2f}")
         self.ocr_lang_var = tk.StringVar(value=self.app_context.ocr_language)
+        self.cancellation_event = threading.Event()
+        self.ocr_completed = False
 
     def _create_menu(self):
         menubar = tk.Menu(self)
@@ -110,10 +113,17 @@ class SubtitlePreviewer(tk.Tk):
         self.btn_load_session.pack(fill=tk.X, pady=2)
         self.btn_start_ocr = ttk.Button(control_frame, text=EN_TRANSLATIONS["start_ocr_button"], command=self.start_ocr_thread, state=tk.DISABLED)
         self.btn_start_ocr.pack(fill=tk.X, pady=2)
+        self.btn_cancel_ocr = ttk.Button(control_frame, text=EN_TRANSLATIONS["cancel_button"], command=self.cancel_ocr, state=tk.DISABLED)
+        self.btn_cancel_ocr.pack(fill=tk.X, pady=2)
         self.btn_retry_failed = ttk.Button(control_frame, text=EN_TRANSLATIONS["retry_failed_batches_button"], command=self.retry_failed_batches, state=tk.DISABLED)
         self.btn_retry_failed.pack(fill=tk.X, pady=2)
-        self.status_label = ttk.Label(control_frame, text=EN_TRANSLATIONS["status_label_initial"], wraplength=300, justify=tk.LEFT)
-        self.status_label.pack(fill=tk.X, pady=5)
+        
+        status_frame = ttk.Frame(control_frame, height=40)
+        status_frame.pack(fill=tk.X, pady=5)
+        status_frame.pack_propagate(False)
+        self.status_label = ttk.Label(status_frame, text=EN_TRANSLATIONS["status_label_initial"], wraplength=300, justify=tk.LEFT)
+        self.status_label.pack(fill=tk.BOTH, expand=True)
+
         self.progress_bar = ttk.Progressbar(control_frame, mode='indeterminate')
         self.progress_bar.pack(fill=tk.X)
 
@@ -173,8 +183,14 @@ class SubtitlePreviewer(tk.Tk):
         except tk.TclError:
             self.text_font = font.Font(family="Arial", size=16)
 
-        self.image_label = ttk.Label(right_frame, text=EN_TRANSLATIONS["image_label_initial"], anchor="center", background="gray")
-        self.image_label.grid(row=0, column=0, sticky="nsew", pady=(0, 5))
+        image_container = ttk.Frame(right_frame)
+        image_container.grid(row=0, column=0, sticky="nsew", pady=(0, 5))
+        image_container.grid_propagate(False)
+        image_container.grid_rowconfigure(0, weight=1)
+        image_container.grid_columnconfigure(0, weight=1)
+
+        self.image_label = ttk.Label(image_container, text=EN_TRANSLATIONS["image_label_initial"], anchor="center", background="gray")
+        self.image_label.grid(row=0, column=0, sticky="nsew")
         
         self.text_editor = scrolledtext.ScrolledText(right_frame, wrap=tk.WORD, font=self.text_font, height=4)
         self.text_editor.grid(row=1, column=0, sticky="nsew", pady=(5, 0))
@@ -188,6 +204,13 @@ class SubtitlePreviewer(tk.Tk):
         self.log_text.grid(row=0, column=0, sticky="nsew")
 
         return right_frame
+
+    def _center_window(self, width, height):
+        screen_width = self.winfo_screenwidth()
+        screen_height = self.winfo_screenheight()
+        x = (screen_width // 2) - (width // 2)
+        y = (screen_height // 2) - (height // 2)
+        self.geometry(f'{width}x{height}+{x}+{y}')
 
     def _setup_logging(self):
         text_handler = TextHandler(self.log_text)
@@ -229,12 +252,21 @@ class SubtitlePreviewer(tk.Tk):
         self._set_controls_state(tk.DISABLED)
         self.status_label.config(text=EN_TRANSLATIONS["status_processing_ocr"])
         self.progress_bar.start(10)
+        self.cancellation_event.clear() # Reset the event for a new OCR run
         threading.Thread(target=self.run_ocr_and_update_gui, daemon=True).start()
 
+    def cancel_ocr(self):
+        self.cancellation_event.set() # Signal cancellation
+        self.status_label.config(text=EN_TRANSLATIONS["status_ocr_cancelled"])
+        logging.info(EN_TRANSLATIONS["status_ocr_cancelled"])
+        self.progress_bar.stop()
+        self._set_controls_state(tk.NORMAL, ocr_running=False, extraction_running=False)
+
     def run_ocr_and_update_gui(self):
-        subtitles, message = self.app_context.run_ocr_pipeline()
+        subtitles, message = self.app_context.run_ocr_pipeline(self.cancellation_event)
         self.progress_bar.stop()
         if subtitles:
+            self.ocr_completed = True
             self.status_label.config(text=EN_TRANSLATIONS["status_ocr_complete"].format(count=len(self.app_context.subtitles)))
             logging.info(EN_TRANSLATIONS["log_ocr_complete"].format(count=len(self.app_context.subtitles)))
             if self.app_context.subtitles:
@@ -242,7 +274,8 @@ class SubtitlePreviewer(tk.Tk):
         else:
             self.status_label.config(text=EN_TRANSLATIONS["status_error"].format(message=message))
             logging.error(EN_TRANSLATIONS["log_ocr_error"].format(message=message))
-            messagebox.showerror(EN_TRANSLATIONS["error_ocr_title"], message)
+            if not self.cancellation_event.is_set(): # Only show error if not cancelled by user
+                messagebox.showerror(EN_TRANSLATIONS["error_ocr_title"], message)
         self._set_controls_state(tk.NORMAL, ocr_running=False)
 
     def navigate_to(self, index):
@@ -253,7 +286,8 @@ class SubtitlePreviewer(tk.Tk):
         try:
             img_path = os.path.join(self.app_context.image_folder, sub['image_file'])
             pil_img = Image.open(img_path)
-            container_w, container_h = self.image_label.winfo_width(), self.image_label.winfo_height()
+            container = self.image_label.master
+            container_w, container_h = container.winfo_width(), container.winfo_height()
             if container_w < 50 or container_h < 50: container_w, container_h = 800, 500
             scale = min(container_w / pil_img.width, container_h / pil_img.height)
             new_size = (int(pil_img.width * scale), int(pil_img.height * scale))
@@ -334,11 +368,15 @@ class SubtitlePreviewer(tk.Tk):
         dialog = SessionSelectionDialog(self, sessions)
         self.wait_window(dialog)
         if dialog.selected_session:
+            self.ocr_completed = False # Reset on new session load
             session_path = os.path.join(TEMP_DIR_NAME, dialog.selected_session)
             self.status_label.config(text=EN_TRANSLATIONS["status_loading_session"].format(session=dialog.selected_session))
             self.update_idletasks()
             subtitles, message = self.app_context.load_session_from_folder(session_path)
             if subtitles:
+                # Check if the loaded session had OCR results
+                if "batches" in message or "log" in message:
+                    self.ocr_completed = True
                 self.status_label.config(text=message)
                 self.navigate_to(0)
             else:
@@ -353,6 +391,7 @@ class SubtitlePreviewer(tk.Tk):
         
     def select_source_file(self):
         self.app_context.cleanup_current_session_temp()
+        self.ocr_completed = False # Reset on new file selection
         source_path = filedialog.askopenfilename(
             title=EN_TRANSLATIONS["file_dialog_select_source_title"],
             filetypes=[
@@ -362,7 +401,8 @@ class SubtitlePreviewer(tk.Tk):
             ]
         )
         if not source_path: return
-        self._set_controls_state(tk.DISABLED)
+        self.cancellation_event.clear()
+        self._set_controls_state(tk.DISABLED, extraction_running=True)
         ext = os.path.splitext(source_path)[1].lower()
         if ext in ['.mkv', '.mp4', '.ts']:
             threading.Thread(target=self.handle_video_file, args=(source_path,), daemon=True).start()
@@ -393,14 +433,17 @@ class SubtitlePreviewer(tk.Tk):
             self.progress_bar.config(mode='determinate')
             self.progress_bar['value'] = 0
 
-            _, _, error = self.app_context.extract_subtitles_from_video(video_path, stream_index, self.update_extraction_progress)
+            _, _, error = self.app_context.extract_subtitles_from_video(video_path, stream_index, self.update_extraction_progress, self.cancellation_event)
             
             self.progress_bar.config(mode='indeterminate')
             self.progress_bar.stop()
 
             if error:
-                messagebox.showerror(EN_TRANSLATIONS["error_title"], error)
-                self.status_label.config(text=EN_TRANSLATIONS["status_extraction_complete"])
+                if error == EN_TRANSLATIONS["error_extraction_cancelled_by_user"]:
+                    self.status_label.config(text=EN_TRANSLATIONS["status_ocr_cancelled"])
+                else:
+                    messagebox.showerror(EN_TRANSLATIONS["error_title"], error)
+                    self.status_label.config(text=EN_TRANSLATIONS["status_extraction_complete"])
             else:
                 sub_count = len(self.app_context.subtitles)
                 status_message = EN_TRANSLATIONS["status_extraction_complete"].format(count=sub_count)
@@ -408,7 +451,7 @@ class SubtitlePreviewer(tk.Tk):
                 logging.info(EN_TRANSLATIONS["log_extraction_complete"].format(count=sub_count))
         else:
             self.status_label.config(text=EN_TRANSLATIONS["status_subtitle_stream_selection_cancelled"])
-        self._set_controls_state(tk.NORMAL, ocr_running=False)
+        self._set_controls_state(tk.NORMAL, ocr_running=False, extraction_running=False)
             
     def handle_timing_file(self, timing_path):
         self.status_label.config(text=EN_TRANSLATIONS["status_processing_timing_images"])
@@ -418,15 +461,24 @@ class SubtitlePreviewer(tk.Tk):
             self.status_label.config(text=EN_TRANSLATIONS["status_timing_file_processing_failed"])
         else:
             self.status_label.config(text=EN_TRANSLATIONS["status_timing_file_loaded"].format(count=len(subtitles)))
-        self._set_controls_state(tk.NORMAL, ocr_running=False)
+        self._set_controls_state(tk.NORMAL, ocr_running=False, extraction_running=False)
         
-    def _set_controls_state(self, state, ocr_running=True):
+    def _set_controls_state(self, state, ocr_running=True, extraction_running=False):
+        # General controls
         self.btn_select_source.config(state=state)
         self.btn_load_session.config(state=state)
-        ocr_ready = self.app_context.subtitles and not ocr_running
-        self.btn_start_ocr.config(state=tk.NORMAL if ocr_ready else tk.DISABLED)
-        self.btn_retry_failed.config(state=tk.NORMAL if self.app_context.settings.get('last_failed_batches') and ocr_ready else tk.DISABLED)
-        nav_state = tk.NORMAL if ocr_ready else tk.DISABLED
+        self.btn_cancel_ocr.config(state=tk.NORMAL if ocr_running or extraction_running else tk.DISABLED)
+
+        # State based on whether subtitles are loaded (but not necessarily OCR'd)
+        subtitles_loaded = self.app_context.subtitles and not ocr_running
+        self.btn_start_ocr.config(state=tk.NORMAL if subtitles_loaded else tk.DISABLED)
+        self.btn_retry_failed.config(state=tk.NORMAL if self.app_context.settings.get('last_failed_batches') and subtitles_loaded else tk.DISABLED)
+        
+        # Navigation controls are enabled when subtitles are loaded
+        nav_state = tk.NORMAL if subtitles_loaded else tk.DISABLED
         self.btn_prev.config(state=nav_state)
         self.btn_next.config(state=nav_state)
-        self.btn_save.config(state=nav_state)
+
+        # Save button is only enabled after OCR is successfully completed
+        save_state = tk.NORMAL if self.ocr_completed and not ocr_running else tk.DISABLED
+        self.btn_save.config(state=save_state)

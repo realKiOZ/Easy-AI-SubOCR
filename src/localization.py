@@ -108,8 +108,8 @@ EN_TRANSLATIONS = {
     "error_no_timing_file_in_session": "No timing file (.xml or .html) found in this session directory.",
     "error_unsupported_timing_file_format_session": "Unsupported timing file format.",
     "error_timing_file_read_error_session": "Error reading timing file in session. File might be corrupt or empty.",
-    "warning_prompt_file_not_found": "prompt.txt not found. Using default prompt.",
-    "error_reading_prompt_file": "Error reading prompt.txt: {error}. Using default prompt.",
+    "warning_prompt_file_not_found": "assets/prompt.txt not found. Using default prompt.",
+    "error_reading_prompt_file": "Error reading assets/prompt.txt: {error}. Using default prompt.",
     "default_ocr_prompt": "Extract text from image.",
 
     # Log messages and error strings (src/ocr.py)
@@ -175,4 +175,8 @@ EN_TRANSLATIONS = {
     "error_bdsup2sub_unexpected": "Unexpected error running BDSup2Sub: {error}",
     "error_bdsup2sub_details": "Error running BDSup2Sub. Details: {error}",
     "log_stage1_extracting_progress": "Stage 1: Extracting... {percent}%",
+    "cancel_button": "Cancel",
+    "status_ocr_cancelled": "OCR cancelled by user.",
+    "log_mkvextract_cancellation_requested": "Cancellation requested, terminating mkvextract.",
+    "error_extraction_cancelled_by_user": "Extraction cancelled by user."
 }

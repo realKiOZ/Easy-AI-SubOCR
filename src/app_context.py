@@ -1,17 +1,28 @@
 # src/app_context.py
 
 import os
+import sys
 import shutil
 import json
 import uuid
 import logging
 from datetime import datetime
+import threading
 
 from src.settings import load_settings, save_settings, TEMP_DIR_NAME
 from src.video_processor import inspect_video_subtitles, extract_pgs_subtitles
 from src.ocr import run_ocr_pipeline, get_available_models
 from src.utils import parse_bdsup2sub_xml, parse_subtitle_edit_html
 from src.localization import EN_TRANSLATIONS
+
+def resource_path(relative_path: str) -> str:
+    """ Get absolute path to resource, works for dev and for PyInstaller """
+    try:
+        # PyInstaller creates a temp folder and stores path in _MEIPASS
+        base_path = sys._MEIPASS
+    except Exception:
+        base_path = os.path.abspath(".")
+    return os.path.join(base_path, relative_path)
 
 class AppContext:
     def __init__(self):
@@ -23,7 +34,17 @@ class AppContext:
         self.ocr_prompt_template = self._load_ocr_prompt_template()
         self.ocr_language = self.settings.get("ocr_language", "Auto")
         self.generation_config = self.settings.get("generation_config", {})
-        self.bdsup2sub_path = self.settings.get("bdsup2sub_path", "BDSup2Sub.jar")
+        
+        # Attempt to resolve the path for BDSup2Sub.jar robustly
+        bdsup2sub_setting = self.settings.get("bdsup2sub_path", "assets/BDSup2Sub.jar")
+        resolved_path = resource_path(bdsup2sub_setting)
+        if not os.path.exists(resolved_path):
+            # If not found, try to find it in the assets folder as a fallback
+            path_in_assets = resource_path(os.path.join("assets", os.path.basename(bdsup2sub_setting)))
+            if os.path.exists(path_in_assets):
+                resolved_path = path_in_assets
+        self.bdsup2sub_path = resolved_path
+
         self.safety_settings = self.settings.get("safety_settings", [])
 
         self.subtitles = []
@@ -86,16 +107,18 @@ class AppContext:
         """Scans a video file for image subtitle streams."""
         return inspect_video_subtitles(video_path)
 
-    def extract_subtitles_from_video(self, video_path: str, stream_index: int, progress_callback=None) -> tuple[str | None, str | None, str | None]:
+    def extract_subtitles_from_video(self, video_path: str, stream_index: int, progress_callback=None, cancellation_event=None) -> tuple[str | None, str | None, str | None]:
         """Extracts subtitles from a video, parses them, and loads them into the context."""
         logging.info(EN_TRANSLATIONS["log_extracting_subtitles_from"].format(video_file=os.path.basename(video_path), index=stream_index))
         base_name = os.path.splitext(os.path.basename(video_path))[0]
         session_dir = self._create_new_session_dir(base_name)
         
-        image_folder, timing_file, error = extract_pgs_subtitles(video_path, stream_index, session_dir, self.bdsup2sub_path, progress_callback)
+        image_folder, timing_file, error = extract_pgs_subtitles(video_path, stream_index, session_dir, self.bdsup2sub_path, progress_callback, cancellation_event)
         
         if error:
-            logging.error(EN_TRANSLATIONS["log_subtitle_extraction_error"].format(error=error))
+            # Don't log user cancellation as a generic subtitle extraction error
+            if error != EN_TRANSLATIONS["error_extraction_cancelled_by_user"]:
+                logging.error(EN_TRANSLATIONS["log_subtitle_extraction_error"].format(error=error))
             return None, None, error
 
         self.image_folder = image_folder
@@ -155,7 +178,7 @@ class AppContext:
             logging.error(EN_TRANSLATIONS["log_timing_file_read_error_corrupt_empty"])
             return None, EN_TRANSLATIONS["log_timing_file_read_error_corrupt_empty"]
 
-    def run_ocr_pipeline(self) -> tuple[list | None, str]:
+    def run_ocr_pipeline(self, cancellation_event: threading.Event) -> tuple[list | None, str]:
         """Runs the OCR pipeline."""
         if not all([self.api_key, self.model_name, self.timing_file_path, self.image_folder, self.current_session_dir]):
             return None, EN_TRANSLATIONS["error_ocr_config_missing"]
@@ -178,7 +201,8 @@ class AppContext:
             self.safety_settings,
             self.batch_size,
             self.max_retries,
-            current_ocr_prompt
+            current_ocr_prompt,
+            cancellation_event # Pass the cancellation event
         )
         if subtitles:
             self.subtitles = subtitles
@@ -253,7 +277,7 @@ class AppContext:
 
     def _load_ocr_prompt_template(self) -> str:
         """Loads the OCR prompt content from prompt.txt."""
-        prompt_path = "prompt.txt"
+        prompt_path = resource_path("assets/prompt.txt")
         try:
             with open(prompt_path, "r", encoding="utf-8") as f:
                 return f.read()

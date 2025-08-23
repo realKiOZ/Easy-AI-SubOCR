@@ -34,7 +34,7 @@ def inspect_video_subtitles(video_path: str) -> tuple[list, str | None]:
     except Exception as e:
         return [], EN_TRANSLATIONS["error_unknown_video_scan"].format(error=e)
 
-def extract_pgs_subtitles(video_path: str, stream_index: int, session_dir: str, bdsup2sub_path: str, progress_callback=None) -> tuple[str | None, str | None, str | None]:
+def extract_pgs_subtitles(video_path: str, stream_index: int, session_dir: str, bdsup2sub_path: str, progress_callback=None, cancellation_event=None) -> tuple[str | None, str | None, str | None]:
     """{docstring}"""
     images_output_dir = os.path.join(session_dir, "images")
     os.makedirs(images_output_dir, exist_ok=True)
@@ -68,6 +68,11 @@ def extract_pgs_subtitles(video_path: str, stream_index: int, session_dir: str, 
         log_interval = 10  # Log every 10%
 
         for line in iter(process.stdout.readline, ''):
+            if cancellation_event and cancellation_event.is_set():
+                logging.info(EN_TRANSLATIONS["log_mkvextract_cancellation_requested"])
+                process.terminate()
+                break
+
             stripped_line = line.strip()
             if not stripped_line:
                 continue
@@ -94,6 +99,9 @@ def extract_pgs_subtitles(video_path: str, stream_index: int, session_dir: str, 
         process.stdout.close()
         process.stderr.close()
         return_code = process.wait()
+
+        if cancellation_event and cancellation_event.is_set():
+            return None, None, EN_TRANSLATIONS["error_extraction_cancelled_by_user"]
 
         if return_code != 0:
             logging.error(EN_TRANSLATIONS["log_mkvextract_exit_code_error"].format(code=return_code))
