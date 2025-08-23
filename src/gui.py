@@ -86,6 +86,7 @@ class SubtitlePreviewer(tk.Tk):
         style.map("Highlighted.TNotebook.Tab",
                   background=[("selected", selected_bg)])
         style.configure("TNotebook", tabposition='n')
+        style.configure("Save.TButton", font=('Arial', 10, 'bold'), background="#cce0ff")
 
     def _create_widgets(self):
         self.grid_columnconfigure(1, weight=1)
@@ -106,7 +107,12 @@ class SubtitlePreviewer(tk.Tk):
         scrollbar.grid(row=0, column=1, sticky="ns")
         canvas.configure(yscrollcommand=scrollbar.set)
         content_frame = ttk.Frame(canvas, padding=5)
-        canvas.create_window((0, 0), window=content_frame, anchor="nw")
+        content_frame_id = canvas.create_window((0, 0), window=content_frame, anchor="nw")
+
+        def update_width(event):
+            canvas.itemconfig(content_frame_id, width=event.width)
+        
+        canvas.bind('<Configure>', update_width)
         content_frame.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
         content_frame.grid_columnconfigure(0, weight=1)
         api_frame = self._create_api_config_frame(content_frame)
@@ -135,30 +141,40 @@ class SubtitlePreviewer(tk.Tk):
     def _create_api_config_frame(self, parent):
         api_frame = ttk.LabelFrame(parent, text="API Configuration", padding=10)
         api_frame.columnconfigure(1, weight=1)
+
         ttk.Label(api_frame, text="Google API Key:").grid(row=0, column=0, sticky="w", pady=2)
         self.api_key_entry = ttk.Entry(api_frame, textvariable=self.api_key_var, show="*")
-        self.api_key_entry.grid(row=0, column=1, columnspan=2, sticky="ew")
-        self.load_models_button = ttk.Button(api_frame, text="Load/Update Model", command=self.load_models)
-        self.load_models_button.grid(row=1, column=1, sticky="e", pady=(5,0))
-        ttk.Label(api_frame, text="Model:").grid(row=2, column=0, sticky="w", pady=2)
+        self.api_key_entry.grid(row=0, column=1, columnspan=2, sticky="ew", padx=(5,0))
+
+        ttk.Label(api_frame, text="Model:").grid(row=1, column=0, sticky="w", pady=2)
         self.model_combobox = ttk.Combobox(api_frame, textvariable=self.model_var, state="readonly")
-        self.model_combobox.grid(row=2, column=1, columnspan=2, sticky="ew")
+        self.model_combobox.grid(row=1, column=1, sticky="w", padx=(5,5), pady=(5,0))
+        self.load_models_button = ttk.Button(api_frame, text="Load/Update", command=self.load_models)
+        self.load_models_button.grid(row=1, column=2, sticky="e", pady=(5,0))
+        
         self.model_combobox.bind("<<ComboboxSelected>>", self.on_model_change)
         return api_frame
 
     def _create_nav_save_frame(self, parent):
         nav_frame = ttk.LabelFrame(parent, text="Navigation & Save", padding=10)
         nav_frame.columnconfigure(0, weight=1)
+        nav_frame.columnconfigure(1, weight=1)
+        nav_frame.columnconfigure(2, weight=1)
+
         self.btn_prev = ttk.Button(nav_frame, text="<< Previous", command=self.prev_sub)
-        self.btn_prev.grid(row=0, column=0, sticky="ew", pady=2)
+        self.btn_prev.grid(row=0, column=0, sticky="ew", pady=2, padx=(0, 5))
+        
         self.nav_label = ttk.Label(nav_frame, text="Sub 0 / 0", anchor="center")
-        self.nav_label.grid(row=1, column=0, sticky="ew", pady=5)
-        self.time_label = ttk.Label(nav_frame, text="00:00:00,000 --> 00:00:00,000", anchor="center")
-        self.time_label.grid(row=2, column=0, sticky="ew", pady=5)
+        self.nav_label.grid(row=0, column=1, sticky="ew", pady=5)
+
         self.btn_next = ttk.Button(nav_frame, text="Next >>", command=self.next_sub)
-        self.btn_next.grid(row=3, column=0, sticky="ew", pady=2)
-        self.btn_save = ttk.Button(nav_frame, text="Save to .SRT file", command=self.save_srt)
-        self.btn_save.grid(row=4, column=0, sticky="ew", pady=(5, 2))
+        self.btn_next.grid(row=0, column=2, sticky="ew", pady=2, padx=(5, 0))
+
+        self.time_label = ttk.Label(nav_frame, text="00:00:00,000 --> 00:00:00,000", anchor="center")
+        self.time_label.grid(row=1, column=0, columnspan=3, sticky="ew", pady=5)
+        
+        self.btn_save = ttk.Button(nav_frame, text="Save to .SRT file", command=self.save_srt, style="Save.TButton")
+        self.btn_save.grid(row=2, column=0, columnspan=3, sticky="ew", pady=(5, 2))
         return nav_frame
 
     def _create_right_panel(self):
@@ -237,7 +253,10 @@ class SubtitlePreviewer(tk.Tk):
         self.hardsub_confidence_display_var.set(f"{self.hardsub_confidence_var.get():.2f}")
 
     def on_scale_change(self, event=None):
-        self.temp_display_var.set(f"{self.temp_var.get():.2f}")
+        value = self.temp_var.get()
+        stepped_value = round(value / 0.05) * 0.05
+        self.temp_var.set(stepped_value)
+        self.temp_display_var.set(f"{stepped_value:.2f}")
         self.save_advanced_settings()
 
     def save_advanced_settings(self, event=None):
@@ -245,7 +264,6 @@ class SubtitlePreviewer(tk.Tk):
         self.app_context.update_settings("ocr_language", self.ocr_lang_var.get().strip())
         generation_config = {"temperature": self.temp_var.get()}
         self.app_context.update_settings("generation_config", generation_config)
-        logging.info("Advanced settings saved.")
 
     def start_ocr_thread(self, indices_to_process=None):
         if not all([self.app_context.api_key, self.app_context.model_name, self.app_context.image_folder]):

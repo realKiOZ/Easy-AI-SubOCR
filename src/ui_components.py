@@ -118,8 +118,8 @@ def create_advanced_settings(parent, gui_instance):
     
     # Temperature
     ttk.Label(adv_frame, text="Temperature:").grid(row=1, column=0, sticky="w")
-    ttk.Scale(adv_frame, from_=0.0, to=1.0, variable=gui_instance.temp_var, command=gui_instance.on_scale_change).grid(row=1, column=1, sticky="ew", padx=5)
-    ttk.Label(adv_frame, textvariable=gui_instance.temp_display_var, width=4).grid(row=1, column=2)
+    ttk.Scale(adv_frame, from_=0.0, to=2.0, variable=gui_instance.temp_var, command=gui_instance.on_scale_change).grid(row=1, column=1, sticky="ew", padx=5)
+    ttk.Label(adv_frame, textvariable=gui_instance.temp_display_var, width=4).grid(row=1, column=2, sticky="w")
     
     # OCR Language
     ttk.Label(adv_frame, text="OCR Language:").grid(row=2, column=0, sticky="w", pady=(5,0))
