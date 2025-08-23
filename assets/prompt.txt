@@ -21,6 +21,5 @@ Example response for 3 images:
     "text": "This contains\ntwo lines of text."
   }
 ]
-```
 
 Do not include any explanatory text or markdown formatting outside of the main JSON array.

@@ -6,7 +6,6 @@ import logging
 import shutil
 import subprocess
 import os
-from src.localization import EN_TRANSLATIONS
 from bs4 import BeautifulSoup
 import xml.etree.ElementTree as ET
 import re
@@ -47,7 +46,7 @@ def parse_bdsup2sub_xml(xml_path: str) -> list | None:
                 })
         return events
     except Exception as e:
-        logging.error(EN_TRANSLATIONS["log_xml_parse_error"].format(path=xml_path, error=e))
+        logging.error(f"Error parsing XML file '{xml_path}': {e}")
         return None
 
 def format_time_for_srt(tc: str, frame_rate: float) -> str:
@@ -58,7 +57,7 @@ def format_time_for_srt(tc: str, frame_rate: float) -> str:
         ms = int((f / frame_rate) * 1000)
         return f"{h:02d}:{m:02d}:{s:02d},{ms:03d}"
     except (ValueError, IndexError) as e:
-        logging.error(EN_TRANSLATIONS["log_invalid_timecode_format"].format(timecode=tc, error=e))
+        logging.error(f"Invalid timecode format: {tc}. Error: {e}")
         return "00:00:00,000"
 
 def parse_subtitle_edit_html(html_path: str) -> list | None:
@@ -108,7 +107,7 @@ def parse_subtitle_edit_html(html_path: str) -> list | None:
                     s, ms = s_ms.split(',')
                     return f"00:{int(m):02d}:{int(s):02d},{ms}"
                 else:
-                    logging.warning(EN_TRANSLATIONS["warning_unknown_time_format"].format(time_string=t_str))
+                    logging.warning(f"Unknown time format: {t_str}")
                     return "00:00:00,000"
 
             events.append({
@@ -120,5 +119,14 @@ def parse_subtitle_edit_html(html_path: str) -> list | None:
         return events
 
     except Exception as e:
-        logging.error(EN_TRANSLATIONS["log_html_parse_error"].format(path=html_path, error=e))
+        logging.error(f"Error parsing HTML file '{html_path}': {e}")
         return None
+
+def is_cuda_available():
+    """Kiểm tra xem OpenCV có thể sử dụng CUDA hay không."""
+    try:
+        import cv2
+        return cv2.cuda.getCudaEnabledDeviceCount() > 0
+    except Exception as e:
+        logging.warning(f"Could not check for CUDA availability: {e}")
+        return False

@@ -4,3 +4,5 @@ Pillow
 beautifulsoup4
 lxml
 tkextrafont
+opencv-python
+numpy

@@ -4,18 +4,22 @@ import subprocess
 import json
 import os
 import logging
-import re
-from src.localization import EN_TRANSLATIONS
+import xml.etree.ElementTree as ET # <-- THÊM DÒNG NÀY
 from src.tool_path_manager import get_tool_path
 
 def inspect_video_subtitles(video_path: str) -> tuple[list, str | None]:
-    """{docstring}"""
+    """Uses ffprobe to scan video files and find image subtitle streams."""
+    ffprobe_path = get_tool_path('ffprobe')
     command = [
-        get_tool_path('ffprobe'), '-v', 'quiet', '-print_format', 'json', '-show_streams',
+        ffprobe_path, '-v', 'quiet', '-print_format', 'json', '-show_streams',
         '-select_streams', 's', video_path
     ]
     try:
-        result = subprocess.run(command, capture_output=True, text=True, check=True, encoding='utf-8')
+        creationflags = subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
+        result = subprocess.run(
+            command, capture_output=True, text=True, check=True, 
+            encoding='utf-8', creationflags=creationflags
+        )
         data = json.loads(result.stdout)
         subtitle_streams = []
         for stream in data.get('streams', []):
@@ -26,148 +30,103 @@ def inspect_video_subtitles(video_path: str) -> tuple[list, str | None]:
                 if title: info += f" ({title})"
                 subtitle_streams.append({'index': stream['index'], 'info': info})
         if not subtitle_streams:
-            return [], EN_TRANSLATIONS["error_no_image_subtitle_streams_found"]
+            return [], "No image subtitle streams (PGS, VobSub) found in this video."
         return subtitle_streams, None
     except FileNotFoundError:
-        return [], EN_TRANSLATIONS["error_ffprobe_not_found"]
+        return [], "Error: `ffprobe` not found. Please check assets/tools."
     except subprocess.CalledProcessError as e:
-        return [], EN_TRANSLATIONS["error_video_scan_failed"].format(stderr=e.stderr)
+        return [], f"Error scanning video: {e.stderr}"
     except Exception as e:
-        return [], EN_TRANSLATIONS["error_unknown_video_scan"].format(error=e)
+        return [], f"Unknown error: {e}"
 
 def extract_pgs_subtitles(video_path: str, stream_index: int, session_dir: str, bdsup2sub_path: str, progress_callback=None, cancellation_event=None) -> tuple[str | None, str | None, str | None]:
-    """{docstring}"""
+    """Uses mkvextract and BDSup2Sub to extract and convert subtitles."""
     images_output_dir = os.path.join(session_dir, "images")
     os.makedirs(images_output_dir, exist_ok=True)
     
     sup_file_path = os.path.join(images_output_dir, "temp.sup")
     xml_file_path = os.path.join(images_output_dir, "temp.xml")
 
-    track_id = stream_index
-    track_spec = f"{track_id}:{sup_file_path}"
+    track_spec = f"{stream_index}:{sup_file_path}"
     
-    mkvextract_command = [get_tool_path('mkvextract'), '--gui-mode', video_path, 'tracks', track_spec]
+    mkvextract_path = get_tool_path('mkvextract')
+    mkvextract_command = [mkvextract_path, '--gui-mode', video_path, 'tracks', track_spec]
     try:
-        logging.info(EN_TRANSLATIONS["log_stage1_extracting_raw_stream"])
-        creationflags = 0
-        if os.name == 'nt':
-            creationflags = subprocess.CREATE_NO_WINDOW
+        logging.info("Stage 1/2: Extracting raw subtitle stream from video...")
+        creationflags = subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
 
         process = subprocess.Popen(
             mkvextract_command,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            encoding='utf-8',
-            errors='replace',
-            creationflags=creationflags
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+            encoding='utf-8', errors='replace', creationflags=creationflags
         )
-
-        # With --gui-mode, mkvextract will output progress to stdout as #GUI#progress X%
-        progress_found = False
-        last_logged_percent = -1
-        log_interval = 10  # Log every 10%
-
+        
         for line in iter(process.stdout.readline, ''):
             if cancellation_event and cancellation_event.is_set():
-                logging.info(EN_TRANSLATIONS["log_mkvextract_cancellation_requested"])
+                logging.info("Cancellation requested, terminating mkvextract.")
                 process.terminate()
                 break
-
-            stripped_line = line.strip()
-            if not stripped_line:
-                continue
-            
-            if stripped_line.startswith("#GUI#progress"):
+            if line.strip().startswith("#GUI#progress"):
                 try:
-                    percent_str = stripped_line.split(" ")[1].replace('%', '')
-                    percent = int(percent_str)
-                    progress_found = True
-                    
-                    if progress_callback:
-                        progress_callback(percent)
-
-                    # Log progress at intervals to avoid spamming
-                    if percent >= last_logged_percent + log_interval:
-                        logging.info(EN_TRANSLATIONS["log_stage1_extracting_progress"].format(percent=percent))
-                        last_logged_percent = percent
-
+                    percent = int(line.strip().split(" ")[1].replace('%', ''))
+                    if progress_callback: progress_callback(percent)
                 except (IndexError, ValueError):
-                    logging.warning(EN_TRANSLATIONS["warning_cannot_parse_progress_log"].format(line=stripped_line))
-            elif stripped_line.startswith("#GUI#error"):
-                 logging.error(EN_TRANSLATIONS["error_mkvextract_error_message"].format(message=stripped_line.replace('#GUI#error ', '')))
+                    pass
         
-        process.stdout.close()
-        process.stderr.close()
+        _, stderr = process.communicate()
         return_code = process.wait()
 
         if cancellation_event and cancellation_event.is_set():
-            return None, None, EN_TRANSLATIONS["error_extraction_cancelled_by_user"]
+            return None, None, "Extraction cancelled by user."
 
         if return_code != 0:
-            logging.error(EN_TRANSLATIONS["log_mkvextract_exit_code_error"].format(code=return_code))
-            return None, None, EN_TRANSLATIONS["error_mkvextract_failed_check_log"]
+            logging.error(f"mkvextract exited with error code: {return_code}.")
+            logging.error(f"mkvextract stderr: {stderr}")
+            return None, None, "Error running mkvextract. Please check log."
 
-        # If no Progress line was found and no error, the process might have been too fast
-        if not progress_found:
-            logging.info(EN_TRANSLATIONS["log_stage1_extraction_fast"])
-
-        logging.info(EN_TRANSLATIONS["log_stage1_complete"])
-
+        logging.info("Stage 1 complete.")
     except FileNotFoundError:
-        return None, None, EN_TRANSLATIONS["error_mkvextract_not_found"]
+        return None, None, "Error: `mkvextract` not found. Please check assets/tools."
     except Exception as e:
-        logging.error(EN_TRANSLATIONS["error_mkvextract_unexpected"].format(error=e))
-        return None, None, EN_TRANSLATIONS["error_mkvextract_details"].format(error=e)
+        return None, None, f"Error running mkvextract. Details: {e}"
 
     if not os.path.exists(bdsup2sub_path):
-        return None, None, EN_TRANSLATIONS["error_bdsup2sub_file_not_found"].format(path=bdsup2sub_path)
+        return None, None, f"Error: File '{bdsup2sub_path}' not found. Please check settings."
     
-    java_command = [get_tool_path('java'), '-jar', bdsup2sub_path, sup_file_path, '-o', xml_file_path]
+    java_path = get_tool_path('java')
+    java_command = [java_path, '-jar', bdsup2sub_path, sup_file_path, '-o', xml_file_path]
     try:
-        logging.info(EN_TRANSLATIONS["log_stage2_converting_subtitles"])
-        creationflags = 0
-        if os.name == 'nt':
-            creationflags = subprocess.CREATE_NO_WINDOW
-
-        process = subprocess.Popen(
-            java_command,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            encoding='utf-8',
-            errors='replace',
-            creationflags=creationflags
-        )
-
-        # Only log important messages, skip per-sub progress
-        for line in iter(process.stdout.readline, ''):
-            stripped_line = line.strip()
-            if not stripped_line:
-                continue
-
-            # Keywords indicating important messages
-            important_keywords = ["loading", "writing", "detected", "conversion", "warn", "error"]
-            
-            # Filter out unimportant lines
-            if any(keyword in stripped_line.lower() for keyword in important_keywords):
-                 if "decoding frame" not in stripped_line.lower() and not stripped_line.startswith("#>"):
-                    logging.info(stripped_line)
+        logging.info("Stage 2/2: Converting raw subtitles to images and timing file...")
+        creationflags = subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
         
-        process.stdout.close()
-        return_code = process.wait()
-
-        if return_code != 0:
-            logging.error(EN_TRANSLATIONS["log_bdsup2sub_exit_code_error"].format(code=return_code))
-            return None, None, EN_TRANSLATIONS["error_bdsup2sub_failed_check_log"]
-
-        logging.info(EN_TRANSLATIONS["log_bdsup2sub_complete_success"])
+        subprocess.run(
+            java_command, capture_output=True, text=True, check=True,
+            encoding='utf-8', errors='replace', creationflags=creationflags
+        )
+        
+        # --- LOGIC ĐẾM SỐ LƯỢNG BẮT ĐẦU TỪ ĐÂY ---
         if not os.path.exists(xml_file_path):
-             return None, None, EN_TRANSLATIONS["error_bdsup2sub_no_xml_created"]
+             return None, None, "Error: BDSup2Sub ran but did not create an XML file."
+        
+        try:
+            # Phân tích file XML để đếm số lượng phụ đề
+            tree = ET.parse(xml_file_path)
+            root = tree.getroot()
+            subtitle_count = len(root.findall('Events/Event'))
+            logging.info(f"BDSup2Sub completed successfully. Found {subtitle_count} subtitles.")
+        except ET.ParseError as e:
+            # Nếu không parse được XML, ghi log cảnh báo và dùng thông báo cũ
+            logging.warning(f"Could not parse XML to get subtitle count, but file was created. Error: {e}")
+            logging.info("BDSup2Sub completed successfully.")
+
         return images_output_dir, xml_file_path, None
         
     except FileNotFoundError:
-        return None, None, EN_TRANSLATIONS["error_java_not_found"]
+        return None, None, f"Error: `java` not found. Please check assets/tools. Expected at: {java_path}"
+    except subprocess.CalledProcessError as e:
+        logging.error(f"BDSup2Sub exited with error code: {e.returncode}. Please check log for details.")
+        logging.error(f"--- BDSup2Sub Full Output (Error) ---\nSTDOUT:\n{e.stdout}\nSTDERR:\n{e.stderr}")
+        return None, None, "Error running BDSup2Sub. Please check log for details."
     except Exception as e:
-        logging.error(EN_TRANSLATIONS["error_bdsup2sub_unexpected"].format(error=e))
-        return None, None, EN_TRANSLATIONS["error_bdsup2sub_details"].format(error=e)
+        logging.error(f"Unexpected error running BDSup2Sub: {e}")
+        return None, None, f"Error running BDSup2Sub. Details: {e}"
