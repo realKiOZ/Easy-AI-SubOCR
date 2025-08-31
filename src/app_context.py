@@ -192,7 +192,7 @@ class AppContext:
             current_ocr_prompt = self.ocr_prompt_template
 
         if self.ocr_language and self.ocr_language.lower() != 'auto':
-            current_ocr_prompt += f"\nImportant: The language of the subtitles is {self.ocr_language}. Extract text in this language only."
+            current_ocr_prompt += f"\nImportant: The primary language of the subtitles is {self.ocr_language}. Please prioritize text in this language."
 
         subtitles, message = run_ocr_pipeline(
             self.subtitles,
