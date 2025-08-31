@@ -427,8 +427,18 @@ class SubtitlePreviewer(tk.Tk):
             title="Select Video for Hardsub OCR",
             filetypes=[("Video Files", "*.mkv *.mp4 *.ts")]
         )
-        if not source_path: return
-            
+        if not source_path:
+            return
+        
+        self.app_context.hardsub_video_path = source_path
+        self.btn_detect_hardsub.config(state=tk.NORMAL)
+        logging.info(f"Selected hardsub video: {source_path}")
+
+    def start_hardsub_detection_thread(self):
+        if not self.app_context.hardsub_video_path:
+            messagebox.showwarning("No Video", "Please select a video file first.")
+            return
+
         self.cancellation_event.clear()
         self._set_controls_state(tk.DISABLED, extraction_running=True)
         
@@ -445,7 +455,7 @@ class SubtitlePreviewer(tk.Tk):
             "confidence": self.hardsub_confidence_var.get(),
             "quality": quality_map.get(self.hardsub_quality_var.get(), 320)
         }
-        threading.Thread(target=self.handle_hardsub_video, args=(source_path, options), daemon=True).start()
+        threading.Thread(target=self.handle_hardsub_video, args=(self.app_context.hardsub_video_path, options), daemon=True).start()
     
     def handle_hardsub_video(self, video_path, options):
         self.status_label.config(text="Analyzing video for hardsubs...")
@@ -507,10 +517,18 @@ class SubtitlePreviewer(tk.Tk):
         is_disabled = state == tk.DISABLED or ocr_running or extraction_running
         effective_state = tk.DISABLED if is_disabled else tk.NORMAL
         
-        for widget_name in ['btn_select_source', 'btn_load_session', 'btn_select_hardsub_video', 'load_models_button']:
+        for widget_name in ['btn_select_source', 'btn_load_session', 'btn_select_hardsub_video', 'load_models_button', 'btn_detect_hardsub']:
             if hasattr(self, widget_name):
                 widget = getattr(self, widget_name)
-                if widget: widget.config(state=effective_state)
+                if widget:
+                    # Special handling for the detect button, it should only be enabled if a video is selected
+                    if widget_name == 'btn_detect_hardsub':
+                        if self.app_context.hardsub_video_path and not is_disabled:
+                            widget.config(state=tk.NORMAL)
+                        else:
+                            widget.config(state=tk.DISABLED)
+                    else:
+                        widget.config(state=effective_state)
 
         self.btn_cancel_ocr.config(state=tk.NORMAL if ocr_running or extraction_running else tk.DISABLED)
         subtitles_loaded = bool(self.app_context.subtitles) and not is_disabled

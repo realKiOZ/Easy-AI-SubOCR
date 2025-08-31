@@ -80,21 +80,23 @@ class SessionSelectionDialog(tk.Toplevel):
 def create_ocr_controls(parent, gui_instance):
     """Tạo các control chung cho OCR (nút, status, progress bar)."""
     frame = ttk.Frame(parent)
-    
+    frame.columnconfigure(0, weight=1)
+    frame.columnconfigure(1, weight=1)
+
     btn_start_ocr = ttk.Button(frame, text="2. Start OCR", command=gui_instance.start_ocr_thread)
-    btn_start_ocr.pack(fill=tk.X, pady=2)
+    btn_start_ocr.grid(row=0, column=0, sticky="ew", padx=(0, 2), pady=2)
     gui_instance.btn_start_ocr = btn_start_ocr
 
     btn_cancel_ocr = ttk.Button(frame, text="Cancel", command=gui_instance.cancel_ocr)
-    btn_cancel_ocr.pack(fill=tk.X, pady=2)
+    btn_cancel_ocr.grid(row=0, column=1, sticky="ew", padx=(2, 0), pady=2)
     gui_instance.btn_cancel_ocr = btn_cancel_ocr
 
     btn_retry_failed = ttk.Button(frame, text="Retry Failed Batches", command=gui_instance.retry_failed_batches)
-    btn_retry_failed.pack(fill=tk.X, pady=2)
+    btn_retry_failed.grid(row=1, column=0, columnspan=2, sticky="ew", pady=2)
     gui_instance.btn_retry_failed = btn_retry_failed
 
     status_frame = ttk.Frame(frame, height=40)
-    status_frame.pack(fill=tk.X, pady=5)
+    status_frame.grid(row=2, column=0, columnspan=2, sticky="ew", pady=5)
     status_frame.pack_propagate(False)
     
     status_label = ttk.Label(status_frame, text="...", wraplength=300, justify=tk.LEFT)
@@ -102,7 +104,7 @@ def create_ocr_controls(parent, gui_instance):
     gui_instance.status_label = status_label
 
     progress_bar = ttk.Progressbar(frame, mode='determinate')
-    progress_bar.pack(fill=tk.X)
+    progress_bar.grid(row=3, column=0, columnspan=2, sticky="ew")
     gui_instance.progress_bar = progress_bar
 
     return frame
@@ -111,22 +113,23 @@ def create_advanced_settings(parent, gui_instance):
     """Tạo frame Cài đặt Nâng cao."""
     adv_frame = ttk.LabelFrame(parent, text="Advanced Settings", padding=10)
     adv_frame.columnconfigure(1, weight=1)
+    adv_frame.columnconfigure(3, weight=1)
     
     # Batch Size
     ttk.Label(adv_frame, text="Batch Size:").grid(row=0, column=0, sticky="w", pady=2)
-    ttk.Spinbox(adv_frame, from_=1, to=500, textvariable=gui_instance.batch_size_var, command=gui_instance.save_advanced_settings, wrap=True, width=5).grid(row=0, column=1, columnspan=2, sticky="ew", padx=5, pady=(5,0))
-    
-    # Temperature
-    ttk.Label(adv_frame, text="Temperature:").grid(row=1, column=0, sticky="w")
-    ttk.Scale(adv_frame, from_=0.0, to=2.0, variable=gui_instance.temp_var, command=gui_instance.on_scale_change).grid(row=1, column=1, sticky="ew", padx=5)
-    ttk.Label(adv_frame, textvariable=gui_instance.temp_display_var, width=4).grid(row=1, column=2, sticky="w")
+    ttk.Spinbox(adv_frame, from_=1, to=500, textvariable=gui_instance.batch_size_var, command=gui_instance.save_advanced_settings, wrap=True, width=5).grid(row=0, column=1, sticky="w", padx=5, pady=(5,0))
     
     # OCR Language
-    ttk.Label(adv_frame, text="OCR Language:").grid(row=2, column=0, sticky="w", pady=(5,0))
-    ocr_lang_combobox = ttk.Combobox(adv_frame, textvariable=gui_instance.ocr_lang_var)
+    ttk.Label(adv_frame, text="OCR Language:").grid(row=0, column=2, sticky="w", pady=(5,0), padx=(10,0))
+    ocr_lang_combobox = ttk.Combobox(adv_frame, textvariable=gui_instance.ocr_lang_var, width=12)
     ocr_lang_combobox['values'] = ['Auto', 'Vietnamese', 'English', 'Japanese', 'Chinese', 'Korean', 'French', 'German', 'Spanish', 'Italian', 'Russian', 'Portuguese', 'Dutch', 'Polish', 'Turkish', 'Arabic', 'Hindi', 'Thai', 'Indonesian', 'Malay', 'Filipino']
-    ocr_lang_combobox.grid(row=2, column=1, columnspan=2, sticky="ew", padx=5, pady=(5,0))
+    ocr_lang_combobox.grid(row=0, column=3, sticky="ew", padx=5, pady=(5,0))
     ocr_lang_combobox.bind("<<ComboboxSelected>>", gui_instance.save_advanced_settings)
     ocr_lang_combobox.bind("<FocusOut>", gui_instance.save_advanced_settings)
+
+    # Temperature
+    ttk.Label(adv_frame, text="Temperature:").grid(row=1, column=0, sticky="w", pady=(5,0))
+    ttk.Scale(adv_frame, from_=0.0, to=2.0, variable=gui_instance.temp_var, command=gui_instance.on_scale_change).grid(row=1, column=1, columnspan=2, sticky="ew", padx=5, pady=(5,0))
+    ttk.Label(adv_frame, textvariable=gui_instance.temp_display_var, width=4).grid(row=1, column=3, sticky="w", pady=(5,0))
     
     return adv_frame

@@ -14,12 +14,12 @@ def create_hardsub_tab(parent, gui_instance):
     
     btn_select_hardsub_video = ttk.Button(
         control_frame, 
-        text="1. Select Video for Hardsub OCR", 
+        text="1. Select Video", 
         command=gui_instance.select_hardsub_video
     )
     btn_select_hardsub_video.pack(fill=tk.X, pady=2)
     gui_instance.btn_select_hardsub_video = btn_select_hardsub_video
-    
+
     # Hardsub-specific settings
     hardsub_settings_frame = ttk.LabelFrame(hardsub_frame, text="Hardsub Detection Settings", padding=10)
     hardsub_settings_frame.pack(fill=tk.X, expand=False, pady=(0, 10))
@@ -53,5 +53,14 @@ def create_hardsub_tab(parent, gui_instance):
     quality_combobox = ttk.Combobox(hardsub_settings_frame, textvariable=gui_instance.hardsub_quality_var, state="readonly", width=10)
     quality_combobox['values'] = ['Fast (320px)', 'Balanced (480px)', 'Accurate (640px)']
     quality_combobox.grid(row=4, column=1, columnspan=2, sticky="w", padx=5)
+
+    btn_detect_hardsub = ttk.Button(
+        hardsub_frame,
+        text="2. Detect Subtitles",
+        command=gui_instance.start_hardsub_detection_thread,
+        state=tk.DISABLED
+    )
+    btn_detect_hardsub.pack(fill=tk.X, pady=5)
+    gui_instance.btn_detect_hardsub = btn_detect_hardsub
     
     return hardsub_frame
