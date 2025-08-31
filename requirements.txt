@@ -1,7 +1,10 @@
+# Cài đặt OpenCV từ tệp wheel cục bộ
+./wheels/opencv_contrib_python-4.12.0.88-cp37-abi3-win_amd64.whl
+
+# Các thư viện cần thiết cho ứng dụng
 google-generativeai
 Pillow
 tkextrafont
-opencv-python
 numpy
 tqdm
 beautifulsoup4
