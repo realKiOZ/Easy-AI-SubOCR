@@ -73,7 +73,7 @@ class SubtitlePreviewer(tk.Tk):
         self.hardsub_use_gpu_var = tk.BooleanVar(value=True)
         self.hardsub_confidence_var = tk.DoubleVar(value=0.5)
         self.hardsub_confidence_display_var = tk.StringVar(value="0.50")
-        self.hardsub_quality_var = tk.StringVar(value='Fast (320px)')
+        self.hardsub_quality_var = tk.StringVar(value='320px')
 
 
     def _configure_styles(self):
@@ -443,9 +443,8 @@ class SubtitlePreviewer(tk.Tk):
         self._set_controls_state(tk.DISABLED, extraction_running=True)
         
         quality_map = {
-            'Fast (320px)': 320,
-            'Balanced (480px)': 480,
-            'Accurate (640px)': 640
+            '320px': 320,
+            '480px': 480
         }
         options = {
             "scan_top": self.hardsub_scan_top_var.get(),

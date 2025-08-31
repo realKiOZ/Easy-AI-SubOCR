@@ -1,4 +1,8 @@
 google-generativeai
-python-dotenv
 Pillow
 tkextrafont
+opencv-python
+numpy
+tqdm
+beautifulsoup4
+lxml

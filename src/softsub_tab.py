@@ -17,7 +17,7 @@ def create_softsub_tab(parent, gui_instance):
     # Nút chọn nguồn (video/xml/html)
     btn_select_source = ttk.Button(
         control_frame, 
-        text="1. Select Source (Video/XML/HTML)", 
+        text="Select Source (Video/XML/HTML)", 
         command=gui_instance.select_source_file
     )
     btn_select_source.pack(fill=tk.X, pady=2)

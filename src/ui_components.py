@@ -83,7 +83,7 @@ def create_ocr_controls(parent, gui_instance):
     frame.columnconfigure(0, weight=1)
     frame.columnconfigure(1, weight=1)
 
-    btn_start_ocr = ttk.Button(frame, text="2. Start OCR", command=gui_instance.start_ocr_thread)
+    btn_start_ocr = ttk.Button(frame, text="Start OCR", command=gui_instance.start_ocr_thread)
     btn_start_ocr.grid(row=0, column=0, sticky="ew", padx=(0, 2), pady=2)
     gui_instance.btn_start_ocr = btn_start_ocr
 
