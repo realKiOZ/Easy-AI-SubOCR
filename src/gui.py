@@ -35,7 +35,7 @@ class SubtitlePreviewer(tk.Tk):
         self.title("Easy AI Subtitle OCR")
         self.geometry("1100x900")
         self.minsize(1000, 1000)
-        self._center_window(1200, 1000)
+        self._center_window(1600, 1000)
         
         self.app_context = AppContext()
         self._init_vars()
@@ -123,12 +123,16 @@ class SubtitlePreviewer(tk.Tk):
         notebook.add(softsub_tab_frame, text="Softsub OCR")
         hardsub_tab_frame = create_hardsub_tab(notebook, self)
         notebook.add(hardsub_tab_frame, text="Hardsub OCR")
-        ocr_controls_frame = create_ocr_controls(content_frame, self)
-        ocr_controls_frame.grid(row=2, column=0, sticky="ew", pady=(0, 10))
+        
+        separator = ttk.Separator(content_frame, orient='horizontal')
+        separator.grid(row=2, column=0, sticky='ew', pady=15)
+
         adv_settings_frame = create_advanced_settings(content_frame, self)
         adv_settings_frame.grid(row=3, column=0, sticky="ew", pady=(0, 10))
+        ocr_controls_frame = create_ocr_controls(content_frame, self)
+        ocr_controls_frame.grid(row=4, column=0, sticky="ew", pady=(0, 10))
         nav_frame = self._create_nav_save_frame(content_frame)
-        nav_frame.grid(row=4, column=0, sticky="ew")
+        nav_frame.grid(row=5, column=0, sticky="ew")
         return left_container
 
     def _create_menu(self):
@@ -249,21 +253,60 @@ class SubtitlePreviewer(tk.Tk):
             self.start_ocr_thread(indices_to_process=failed_indices)
 
     def on_hardsub_settings_change(self, event=None):
+        # This method is for live UI updates, like for scales
         self.hardsub_scan_area_height_display_var.set(f"{self.hardsub_scan_area_height_var.get()}%")
         self.hardsub_confidence_display_var.set(f"{self.hardsub_confidence_var.get():.2f}")
+
+    def log_hardsub_settings(self, event=None):
+        # This method logs the final state of the settings
+        # We need a small delay to ensure the variable is updated before logging
+        def log_action():
+            scan_top = "On" if self.hardsub_scan_top_var.get() else "Off"
+            scan_bottom = "On" if self.hardsub_scan_bottom_var.get() else "Off"
+            area_height = f"{self.hardsub_scan_area_height_var.get()}%"
+            use_gpu = "On" if self.hardsub_use_gpu_var.get() else "Off"
+            confidence = f"{self.hardsub_confidence_var.get():.2f}"
+            quality = self.hardsub_quality_var.get()
+
+            log_message = (
+                f"Hardsub settings updated -> "
+                f"Scan Top: {scan_top} | "
+                f"Scan Bottom: {scan_bottom} | "
+                f"Area Height: {area_height} | "
+                f"GPU: {use_gpu} | "
+                f"Confidence: {confidence} | "
+                f"Quality: {quality}"
+            )
+            logging.info(log_message)
+        self.after(50, log_action)
 
     def on_scale_change(self, event=None):
         value = self.temp_var.get()
         stepped_value = round(value / 0.05) * 0.05
         self.temp_var.set(stepped_value)
         self.temp_display_var.set(f"{stepped_value:.2f}")
-        self.save_advanced_settings()
 
     def save_advanced_settings(self, event=None):
         self.app_context.update_settings("batch_size", self.batch_size_var.get())
         self.app_context.update_settings("ocr_language", self.ocr_lang_var.get().strip())
         generation_config = {"temperature": self.temp_var.get()}
         self.app_context.update_settings("generation_config", generation_config)
+        self.log_advanced_settings()
+
+    def log_advanced_settings(self, event=None):
+        def log_action():
+            batch_size = self.batch_size_var.get()
+            ocr_language = self.ocr_lang_var.get()
+            temperature = f"{self.temp_var.get():.2f}"
+
+            log_message = (
+                f"Advanced settings updated -> "
+                f"Batch Size: {batch_size} | "
+                f"OCR Language: {ocr_language} | "
+                f"Temperature: {temperature}"
+            )
+            logging.info(log_message)
+        self.after(50, log_action)
 
     def start_ocr_thread(self, indices_to_process=None):
         if not all([self.app_context.api_key, self.app_context.model_name, self.app_context.image_folder]):
@@ -442,17 +485,15 @@ class SubtitlePreviewer(tk.Tk):
         self.cancellation_event.clear()
         self._set_controls_state(tk.DISABLED, extraction_running=True)
         
-        quality_map = {
-            '320px': 320,
-            '480px': 480
-        }
+        quality_value = self.hardsub_quality_var.get().replace('px', '')
+        
         options = {
             "scan_top": self.hardsub_scan_top_var.get(),
             "scan_bottom": self.hardsub_scan_bottom_var.get(),
             "scan_area_height": self.hardsub_scan_area_height_var.get(),
             "use_gpu": self.hardsub_use_gpu_var.get(),
             "confidence": self.hardsub_confidence_var.get(),
-            "quality": quality_map.get(self.hardsub_quality_var.get(), 320)
+            "quality": int(quality_value)
         }
         threading.Thread(target=self.handle_hardsub_video, args=(self.app_context.hardsub_video_path, options), daemon=True).start()
     

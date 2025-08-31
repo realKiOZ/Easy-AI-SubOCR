@@ -111,7 +111,7 @@ def create_ocr_controls(parent, gui_instance):
 
 def create_advanced_settings(parent, gui_instance):
     """Tạo frame Cài đặt Nâng cao."""
-    adv_frame = ttk.LabelFrame(parent, text="Advanced Settings", padding=10)
+    adv_frame = ttk.LabelFrame(parent, text="Advanced OCR Settings", padding=10)
     adv_frame.columnconfigure(1, weight=1)
     adv_frame.columnconfigure(3, weight=1)
     
@@ -129,7 +129,9 @@ def create_advanced_settings(parent, gui_instance):
 
     # Temperature
     ttk.Label(adv_frame, text="Temperature:").grid(row=1, column=0, sticky="w", pady=(5,0))
-    ttk.Scale(adv_frame, from_=0.0, to=2.0, variable=gui_instance.temp_var, command=gui_instance.on_scale_change).grid(row=1, column=1, columnspan=2, sticky="ew", padx=5, pady=(5,0))
+    temp_scale = ttk.Scale(adv_frame, from_=0.0, to=2.0, variable=gui_instance.temp_var, command=gui_instance.on_scale_change)
+    temp_scale.grid(row=1, column=1, columnspan=2, sticky="ew", padx=5, pady=(5,0))
+    temp_scale.bind("<ButtonRelease-1>", gui_instance.save_advanced_settings)
     ttk.Label(adv_frame, textvariable=gui_instance.temp_display_var, width=4).grid(row=1, column=3, sticky="w", pady=(5,0))
     
     return adv_frame
