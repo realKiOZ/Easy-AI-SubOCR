@@ -24,6 +24,14 @@ DEFAULT_SETTINGS = {
         {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_NONE"},
         {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"}
     ],
+    "hardsub_settings": {
+        "scan_top": True,
+        "scan_bottom": True,
+        "scan_area_height": 30,
+        "use_gpu": True,
+        "confidence": 0.5,
+        "quality": "320px"
+    },
     "last_failed_batches": []
 }
 

@@ -66,14 +66,15 @@ class SubtitlePreviewer(tk.Tk):
         self.cancellation_event = threading.Event()
         self.ocr_completed = False
         # Hardsub settings
-        self.hardsub_scan_top_var = tk.BooleanVar(value=True)
-        self.hardsub_scan_bottom_var = tk.BooleanVar(value=True)
-        self.hardsub_scan_area_height_var = tk.IntVar(value=30)
-        self.hardsub_scan_area_height_display_var = tk.StringVar(value="30%")
-        self.hardsub_use_gpu_var = tk.BooleanVar(value=True)
-        self.hardsub_confidence_var = tk.DoubleVar(value=0.5)
-        self.hardsub_confidence_display_var = tk.StringVar(value="0.50")
-        self.hardsub_quality_var = tk.StringVar(value='320px')
+        hardsub_settings = self.app_context.settings.get("hardsub_settings", {})
+        self.hardsub_scan_top_var = tk.BooleanVar(value=hardsub_settings.get("scan_top", True))
+        self.hardsub_scan_bottom_var = tk.BooleanVar(value=hardsub_settings.get("scan_bottom", True))
+        self.hardsub_scan_area_height_var = tk.IntVar(value=hardsub_settings.get("scan_area_height", 30))
+        self.hardsub_scan_area_height_display_var = tk.StringVar(value=f"{self.hardsub_scan_area_height_var.get()}%")
+        self.hardsub_use_gpu_var = tk.BooleanVar(value=hardsub_settings.get("use_gpu", True))
+        self.hardsub_confidence_var = tk.DoubleVar(value=hardsub_settings.get("confidence", 0.5))
+        self.hardsub_confidence_display_var = tk.StringVar(value=f"{self.hardsub_confidence_var.get():.2f}")
+        self.hardsub_quality_var = tk.StringVar(value=hardsub_settings.get("quality", '320px'))
 
 
     def _configure_styles(self):
@@ -257,10 +258,22 @@ class SubtitlePreviewer(tk.Tk):
         self.hardsub_scan_area_height_display_var.set(f"{self.hardsub_scan_area_height_var.get()}%")
         self.hardsub_confidence_display_var.set(f"{self.hardsub_confidence_var.get():.2f}")
 
+    def save_hardsub_settings(self):
+        hardsub_settings = {
+            "scan_top": self.hardsub_scan_top_var.get(),
+            "scan_bottom": self.hardsub_scan_bottom_var.get(),
+            "scan_area_height": self.hardsub_scan_area_height_var.get(),
+            "use_gpu": self.hardsub_use_gpu_var.get(),
+            "confidence": self.hardsub_confidence_var.get(),
+            "quality": self.hardsub_quality_var.get()
+        }
+        self.app_context.update_settings("hardsub_settings", hardsub_settings)
+
     def log_hardsub_settings(self, event=None):
         # This method logs the final state of the settings
         # We need a small delay to ensure the variable is updated before logging
         def log_action():
+            self.save_hardsub_settings()
             scan_top = "On" if self.hardsub_scan_top_var.get() else "Off"
             scan_bottom = "On" if self.hardsub_scan_bottom_var.get() else "Off"
             area_height = f"{self.hardsub_scan_area_height_var.get()}%"
