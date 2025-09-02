@@ -26,3 +26,12 @@ app_temp/
 build/
 dist/
 *.egg-info/
+/tham-khao
+
+/assets/tools/videosubfinder/Release_x64/TXTResults
+/assets/tools/videosubfinder/Release_x64/ILAImages
+/assets/tools/videosubfinder/Release_x64/ImagesJoined
+/assets/tools/videosubfinder/Release_x64/ISAImages
+/assets/tools/videosubfinder/Release_x64/RGBImages
+/assets/tools/videosubfinder/Release_x64/TestImages
+/assets/tools/videosubfinder/Release_x64/TXTImages

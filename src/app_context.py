@@ -50,6 +50,7 @@ class AppContext:
         self.timing_file_path = ""
         self.current_session_dir = None
         self.hardsub_video_path = None
+        self.source_file_path = None
 
         self._ensure_app_temp_dir()
 
@@ -82,6 +83,7 @@ class AppContext:
         self.subtitles = []
         self.current_index = -1
         self.hardsub_video_path = None
+        self.source_file_path = None
 
     def update_settings(self, key, value):
         self.settings[key] = value

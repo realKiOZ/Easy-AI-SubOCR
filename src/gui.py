@@ -396,8 +396,43 @@ class SubtitlePreviewer(tk.Tk):
 
     def save_srt(self):
         self.sync_text_from_widget()
-        srt_path = filedialog.asksaveasfilename(defaultextension=".srt", filetypes=[("Timing Files", "*.srt")], title="Save to .SRT file")
-        if not srt_path: return
+        if not self.app_context.source_file_path:
+            messagebox.showerror("Error", "Source file path is not available.")
+            return
+
+        source_path = self.app_context.source_file_path
+        source_dir = os.path.dirname(source_path)
+        base_name = os.path.splitext(os.path.basename(source_path))[0]
+        
+        ocr_lang = self.ocr_lang_var.get().strip()
+        
+        lang_map = {
+            'Vietnamese': 'vi', 'English': 'en', 'Japanese': 'ja', 'Chinese': 'zh',
+            'Korean': 'ko', 'French': 'fr', 'German': 'de', 'Spanish': 'es',
+            'Italian': 'it', 'Russian': 'ru', 'Portuguese': 'pt', 'Dutch': 'nl',
+            'Polish': 'pl', 'Turkish': 'tr', 'Arabic': 'ar', 'Hindi': 'hi',
+            'Thai': 'th', 'Indonesian': 'id', 'Malay': 'ms', 'Filipino': 'fil'
+        }
+        
+        lang_code = lang_map.get(ocr_lang)
+        
+        if lang_code:
+            file_name = f"{base_name}.{lang_code}.srt"
+        else:
+            file_name = f"{base_name}.srt"
+            
+        initial_dir = source_dir or os.getcwd()
+
+        srt_path = filedialog.asksaveasfilename(
+            initialdir=initial_dir,
+            initialfile=file_name,
+            defaultextension=".srt",
+            filetypes=[("SRT files", "*.srt"), ("All files", "*.*")]
+        )
+
+        if not srt_path:
+            return
+
         try:
             with open(srt_path, 'w', encoding='utf-8') as f:
                 for i, sub in enumerate(self.app_context.subtitles):
@@ -465,6 +500,7 @@ class SubtitlePreviewer(tk.Tk):
         self.ocr_completed = False
         source_path = filedialog.askopenfilename(title="Select Source: Video, XML, or HTML", filetypes=[("All Supported Files", "*.mkv *.mp4 *.ts *.xml *.html"), ("Video Files", "*.mkv *.mp4 *.ts"), ("Timing Files", "*.xml *.html")])
         if not source_path: return
+        self.app_context.source_file_path = source_path
         self.cancellation_event.clear()
         self._set_controls_state(tk.DISABLED, extraction_running=True)
         ext = os.path.splitext(source_path)[1].lower()
@@ -487,6 +523,7 @@ class SubtitlePreviewer(tk.Tk):
             return
         
         self.app_context.hardsub_video_path = source_path
+        self.app_context.source_file_path = source_path
         self.btn_detect_hardsub.config(state=tk.NORMAL)
         logging.info(f"Selected hardsub video: {source_path}")
 
