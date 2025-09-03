@@ -149,47 +149,80 @@ def run_hardsub_pipeline(video_path, output_image_folder, options, progress_call
         master_event_list.sort(key=lambda x: x[1]['start_time'])
         
         if master_event_list:
+            import threading
             total_events = len(master_event_list)
             use_gpu_option = options.get("use_gpu", True)
             
             exe_path_norm = VSF_EXECUTABLE_PATH.replace('/', '\\')
             vsf_dir_norm = os.path.dirname(exe_path_norm)
             video_path_norm = os.path.abspath(video_path).replace('/', '\\')
-            
-            batch_content = ["@echo off", f'cd /d "{vsf_dir_norm}"', ""]
-            
-            for i, (channel, event) in enumerate(master_event_list):
-                event_temp_dir = os.path.join(APP_TEMP_PATH, f"vsf_event_{channel}_{event.get('start_frame', 0)}_{event.get('end_frame', 0)}")
-                if os.path.exists(event_temp_dir): shutil.rmtree(event_temp_dir)
-                os.makedirs(event_temp_dir)
-                output_dir_norm = os.path.abspath(event_temp_dir).replace('/', '\\')
 
-                command_parts = [ f'"{exe_path_norm}"', '--clear_dirs', '--run_search', '--open_video_opencv',
-                                  f'--start_time {seconds_to_vsf_time(event["start_time"])}', f'--end_time {seconds_to_vsf_time(event["end_time"])}',
-                                  f'--input_video "{video_path_norm}"', f'--output_dir "{output_dir_norm}"' ]
-                if use_gpu_option: command_parts.append('--use_cuda')
-                scan_val = scan_area_height_percent
-                bottom_start, top_end = (1.0 - scan_val, 1.0) if channel == 'top' else (0.0, scan_val)
-                command_parts.extend([f'--bottom_video_image_percent_end {bottom_start:.6f}', f'--top_video_image_percent_end {top_end:.6f}'])
-                command_parts.extend(['/moderate_threshold 0.25', '/image_scale_for_clear_image 4'])
-
-                batch_content.append(f"echo --- Processing event {i+1}/{total_events} ({channel} @ {seconds_to_srt_time(event['start_time'])}) ---")
-                batch_content.append(" ".join(command_parts))
-                batch_content.append("")
-                
-            # Tạo file cờ ngay trước khi chạy batch
+            # Tạo file cờ để theo dõi tiến trình chạy nền
             flag_file = os.path.join(APP_TEMP_PATH, f"vsf_running_{uuid.uuid4()}.flag")
             with open(flag_file, "w") as f: f.write("running")
 
-            # Thêm lệnh xóa file cờ vào cuối file batch
-            batch_content.extend([f"del \"{flag_file}\"", "exit"])
-            
-            batch_file = os.path.join(APP_TEMP_PATH, f"vsf_master_{uuid.uuid4()}.bat")
-            with open(batch_file, "w") as f: f.write("\n".join(batch_content))
+            def vsf_worker():
+                creationflags = 0
+                if os.name == 'nt':
+                    # Giải pháp cuối cùng: Chạy với mức ưu tiên thấp nhất có thể.
+                    creationflags = subprocess.DETACHED_PROCESS | subprocess.CREATE_NO_WINDOW | subprocess.BELOW_NORMAL_PRIORITY_CLASS
 
-            logging.info(f"Launching master VSF batch file for {total_events} events...")
-            # Chạy 1 lần duy nhất, không đợi, nhưng có thể theo dõi qua file cờ
-            subprocess.Popen(f'start "VSF Runner" /min /low "{batch_file}"', shell=True)
+                try:
+                    for i, (channel, event) in enumerate(master_event_list):
+                        if cancellation_event and cancellation_event.is_set():
+                            logging.info("VSF processing cancelled by user.")
+                            break
+                        
+                        progress_message = f"Refining subtitles (VSF): Event {i+1}/{total_events} ({channel} @ {seconds_to_srt_time(event['start_time'])})"
+                        logging.info(progress_message)
+                        if progress_callback:
+                            percentage = 50 + ((i / total_events) * 50)
+                            progress_callback(progress_message, percentage)
+
+                        event_temp_dir = os.path.join(APP_TEMP_PATH, f"vsf_event_{channel}_{event.get('start_frame', 0)}_{event.get('end_frame', 0)}")
+                        if os.path.exists(event_temp_dir): shutil.rmtree(event_temp_dir)
+                        os.makedirs(event_temp_dir)
+                        output_dir_norm = os.path.abspath(event_temp_dir).replace('/', '\\')
+
+                        command_parts = [
+                            exe_path_norm, '--clear_dirs', '--run_search', '--open_video_opencv',
+                            '--start_time', seconds_to_vsf_time(event["start_time"]),
+                            '--end_time', seconds_to_vsf_time(event["end_time"]),
+                            '--input_video', video_path_norm,
+                            '--output_dir', output_dir_norm
+                        ]
+                        if use_gpu_option: command_parts.append('--use_cuda')
+                        
+                        scan_val = scan_area_height_percent
+                        if channel == 'top':
+                            bottom_end, top_end = 1.0, 1.0 - scan_val
+                        else: # bottom
+                            bottom_end, top_end = scan_val, 0.0
+
+                        command_parts.extend([
+                            '--bottom_video_image_percent_end', f'{bottom_end:.6f}',
+                            '--top_video_image_percent_end', f'{top_end:.6f}',
+                            '/moderate_threshold', '0.25',
+                            '/image_scale_for_clear_image', '4'
+                        ])
+                        
+                        # Chạy tiến trình tách biệt hoàn toàn để không ảnh hưởng đến focus
+                        p = subprocess.Popen(command_parts, cwd=vsf_dir_norm, creationflags=creationflags, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                        p.wait() # Đợi tiến trình hoàn thành trước khi tiếp tục
+
+                finally:
+                    if os.path.exists(flag_file):
+                        try:
+                            os.remove(flag_file)
+                            logging.info("VSF flag file removed.")
+                        except OSError as e:
+                            logging.error(f"Error removing flag file: {e}")
+                    logging.info("VSF processing thread finished.")
+
+            logging.info(f"Starting background VSF processing thread for {total_events} events...")
+            thread = threading.Thread(target=vsf_worker)
+            thread.daemon = True # Cho phép chương trình chính thoát dù thread còn chạy
+            thread.start()
     else:
         logging.warning("VideoSubFinder not found. Skipping refinement step.")
     

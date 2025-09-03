@@ -1,5 +1,6 @@
 # src/gui.py
 import os
+import shutil
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox, scrolledtext, font
 from tkextrafont import Font
@@ -10,7 +11,7 @@ import logging
 from src.app_context import AppContext
 from src.ui_components import SubtitleSelectionDialog, SessionSelectionDialog, create_ocr_controls, create_advanced_settings
 from src.utils import check_tools_availability, is_cuda_available
-from src.settings import TEMP_DIR_NAME
+from src.settings import TEMP_DIR_NAME, APP_TEMP_PATH
 from src.softsub_tab import create_softsub_tab
 from src.hardsub_tab import create_hardsub_tab
 
@@ -34,9 +35,9 @@ class SubtitlePreviewer(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title("Easy AI Subtitle OCR")
-        self.geometry("1100x900")
-        self.minsize(1000, 800)
-        self._center_window(1200, 900)
+        self.geometry("1100x1100")
+        self.minsize(1000, 1000)
+        self._center_window(1300, 1000)
         
         self.app_context = AppContext()
         self._init_vars()
@@ -130,7 +131,7 @@ class SubtitlePreviewer(tk.Tk):
         self.config(menu=menubar)
         tools_menu = tk.Menu(menubar, tearoff=0)
         menubar.add_cascade(label="Tools", menu=tools_menu)
-        tools_menu.add_command(label="Manage Cache...", command=self.manage_cache)
+        tools_menu.add_command(label="Clear Temp Folder...", command=self.clear_temp_folder)
 
     def _create_api_config_frame(self, parent):
         api_frame = ttk.LabelFrame(parent, text="API Configuration", padding=10)
@@ -215,8 +216,18 @@ class SubtitlePreviewer(tk.Tk):
             if hasattr(self, 'gpu_check'): self.gpu_check.config(state=tk.NORMAL)
             logging.info("CUDA is available. GPU acceleration enabled.")
 
-    def manage_cache(self):
-        messagebox.showinfo("Info", "Not implemented yet.")
+    def clear_temp_folder(self):
+        if messagebox.askyesno("Confirm", "Are you sure you want to delete all temporary files?\nThis action cannot be undone."):
+            try:
+                if os.path.exists(APP_TEMP_PATH):
+                    shutil.rmtree(APP_TEMP_PATH)
+                    logging.info(f"Temporary folder '{APP_TEMP_PATH}' has been deleted.")
+                os.makedirs(APP_TEMP_PATH, exist_ok=True)
+                logging.info(f"Temporary folder '{APP_TEMP_PATH}' has been recreated.")
+                messagebox.showinfo("Success", "Temporary folder has been cleared successfully.")
+            except Exception as e:
+                logging.error(f"Failed to clear temporary folder: {e}")
+                messagebox.showerror("Error", f"An error occurred while clearing the temp folder:\n{e}")
 
     def retry_failed_batches(self):
         failed_indices = self.app_context.settings.get('last_failed_batches', [])
