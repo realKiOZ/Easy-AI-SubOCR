@@ -5,6 +5,7 @@ import logging
 
 SETTINGS_FILE = "settings.json"
 TEMP_DIR_NAME = "app_temp"
+APP_TEMP_PATH = os.path.abspath(TEMP_DIR_NAME)
 
 DEFAULT_SETTINGS = {
     "api_key": "",
@@ -27,9 +28,9 @@ DEFAULT_SETTINGS = {
     "hardsub_settings": {
         "scan_top": True,
         "scan_bottom": True,
-        "scan_area_height": 30,
+        "scan_area_height": 25,
         "use_gpu": True,
-        "confidence": 0.5,
+        "confidence": 0.3,
         "quality": "320px"
     },
     "last_failed_batches": []

@@ -35,3 +35,10 @@ dist/
 /assets/tools/videosubfinder/Release_x64/RGBImages
 /assets/tools/videosubfinder/Release_x64/TestImages
 /assets/tools/videosubfinder/Release_x64/TXTImages
+
+# Log files
+/logs/
+
+# VideoSubFinder temporary files
+/assets/tools/videosubfinder/Release_x64/*.inf
+/assets/tools/videosubfinder/Release_x64/*.log
