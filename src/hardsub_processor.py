@@ -10,10 +10,10 @@ import shutil
 import tempfile
 import uuid
 
-from src.settings import APP_TEMP_PATH
+from src.settings import APP_TEMP_PATH, load_settings, DEFAULT_NUM_THREADS
+from src.tool_path_manager import resource_path
 
 EAST_MODEL_PATH = os.path.join("assets", "tools", "frozen_east_text_detection.pb")
-VSF_EXECUTABLE_PATH = os.path.abspath(os.path.join("assets", "tools", "videosubfinder", "Release_x64", "VideoSubFinderWXW.exe"))
 
 # --- Các hàm helper ---
 def seconds_to_srt_time(seconds):
@@ -144,7 +144,39 @@ def run_hardsub_pipeline(video_path, output_image_folder, options, progress_call
     cap.release()
 
     flag_file = None
-    if os.path.exists(VSF_EXECUTABLE_PATH):
+    # Lấy đường dẫn VSF CLI từ settings
+    settings = load_settings()
+    vsf_cli_filename = settings["hardsub_settings"].get("vsf_cli_executable", "videosubfinder-cli-cpu.exe")
+    
+    # Ghi đè lựa chọn CLI nếu use_gpu được bật trong options
+    # Ghi đè lựa chọn CLI nếu use_gpu được bật trong options
+    if options.get("use_gpu", True):
+        vsf_cli_filename = "videosubfinder-cli-gpu-cuda.exe"
+    else:
+        vsf_cli_filename = "videosubfinder-cli-cpu.exe"
+        
+    VSF_EXECUTABLE_PATH_CLI = resource_path(os.path.join("assets", "tools", "vsf-cli", vsf_cli_filename))
+
+    if not os.path.exists(VSF_EXECUTABLE_PATH_CLI):
+        logging.warning(f"VSF CLI executable not found at {VSF_EXECUTABLE_PATH_CLI}. Skipping refinement step.")
+        # Trả về kết quả thô của EAST để hiển thị tạm thời
+        cap = cv2.VideoCapture(video_path)
+        all_events_tmp = [("top", event) for event in all_top_events] + [("bottom", event) for event in all_bottom_events]
+        for channel, event in all_events_tmp:
+            middle_frame_idx = (event.get("start_frame", 0) + event.get("end_frame", 0)) // 2
+            cap.set(cv2.CAP_PROP_POS_FRAMES, middle_frame_idx)
+            ret, frame = cap.read()
+            if ret:
+                height, _, _ = frame.shape
+                scan_area_h = int(height * scan_area_height_percent)
+                crop_img = frame[0:scan_area_h, :] if channel == "top" else frame[height - scan_area_h:height, :]
+                image_filename = f"hardsub_tmp_{len(east_subtitles):05d}.png"
+                cv2.imwrite(os.path.join(output_image_folder, image_filename), crop_img)
+                east_subtitles.append({"start_srt": seconds_to_srt_time(event["start_time"]), "end_srt": seconds_to_srt_time(event["end_time"]), "image_file": image_filename, "channel": channel})
+        cap.release()
+        return east_subtitles, "VSF CLI executable not found.", None
+    
+    if os.path.exists(VSF_EXECUTABLE_PATH_CLI):
         master_event_list = [('top', event) for event in all_top_events] + [('bottom', event) for event in all_bottom_events]
         master_event_list.sort(key=lambda x: x[1]['start_time'])
         
@@ -152,8 +184,9 @@ def run_hardsub_pipeline(video_path, output_image_folder, options, progress_call
             import threading
             total_events = len(master_event_list)
             use_gpu_option = options.get("use_gpu", True)
-            
-            exe_path_norm = VSF_EXECUTABLE_PATH.replace('/', '\\')
+            num_threads_option = options.get("num_threads", DEFAULT_NUM_THREADS)
+
+            exe_path_norm = VSF_EXECUTABLE_PATH_CLI.replace('/', '\\')
             vsf_dir_norm = os.path.dirname(exe_path_norm)
             video_path_norm = os.path.abspath(video_path).replace('/', '\\')
 
@@ -181,34 +214,53 @@ def run_hardsub_pipeline(video_path, output_image_folder, options, progress_call
 
                         event_temp_dir = os.path.join(APP_TEMP_PATH, f"vsf_event_{channel}_{event.get('start_frame', 0)}_{event.get('end_frame', 0)}")
                         if os.path.exists(event_temp_dir): shutil.rmtree(event_temp_dir)
-                        os.makedirs(event_temp_dir)
+                        os.makedirs(event_temp_dir, exist_ok=True)
                         output_dir_norm = os.path.abspath(event_temp_dir).replace('/', '\\')
 
                         command_parts = [
-                            exe_path_norm, '--clear_dirs', '--run_search', '--open_video_opencv',
-                            '--start_time', seconds_to_vsf_time(event["start_time"]),
-                            '--end_time', seconds_to_vsf_time(event["end_time"]),
-                            '--input_video', video_path_norm,
-                            '--output_dir', output_dir_norm
+                            exe_path_norm, '-c', '-r', '-ovocv',
+                            '-s', seconds_to_vsf_time(event["start_time"]),
+                            '-e', seconds_to_vsf_time(event["end_time"]),
+                            '-i', video_path_norm,
+                            '-o', output_dir_norm
                         ]
-                        if use_gpu_option: command_parts.append('--use_cuda')
+                        if use_gpu_option: command_parts.append('-uc')
+                        
+                        command_parts.extend(['-nthr', str(num_threads_option)])
                         
                         scan_val = scan_area_height_percent
                         if channel == 'top':
-                            bottom_end, top_end = 1.0, 1.0 - scan_val
+                            # Đối với vùng trên: từ (1.0 - scan_val) đến 1.0 (từ dưới lên)
+                            bottom_end_param = 1.0 - scan_val
+                            top_end_param = 1.0
                         else: # bottom
-                            bottom_end, top_end = scan_val, 0.0
+                            # Đối với vùng dưới: từ 0.0 đến scan_val (từ dưới lên)
+                            bottom_end_param = 0.0
+                            top_end_param = scan_val
 
                         command_parts.extend([
-                            '--bottom_video_image_percent_end', f'{bottom_end:.6f}',
-                            '--top_video_image_percent_end', f'{top_end:.6f}',
-                            '/moderate_threshold', '0.25',
-                            '/image_scale_for_clear_image', '4'
+                            '-be', f'{bottom_end_param:.6f}',
+                            '-te', f'{top_end_param:.6f}',
                         ])
                         
-                        # Chạy tiến trình tách biệt hoàn toàn để không ảnh hưởng đến focus
-                        p = subprocess.Popen(command_parts, cwd=vsf_dir_norm, creationflags=creationflags, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                        p.wait() # Đợi tiến trình hoàn thành trước khi tiếp tục
+                        # Chạy VSF CLI và ghi lại output
+                        logging.debug(f"Running VSF command: {' '.join(command_parts)}")
+                        p = subprocess.Popen(
+                            command_parts, 
+                            stdout=subprocess.PIPE, 
+                            stderr=subprocess.PIPE, 
+                            text=True, 
+                            encoding='utf-8',
+                            cwd=vsf_dir_norm
+                        )
+                        stdout, stderr = p.communicate() # Đợi tiến trình hoàn thành
+
+                        if p.returncode != 0:
+                            logging.error(f"VSF process for event {i+1} failed with return code {p.returncode}.")
+                            if stderr:
+                                logging.error(f"VSF Stderr:\n{stderr}")
+                        if stdout:
+                            logging.info(f"VSF Stdout for event {i+1}:\n{stdout}")
 
                 finally:
                     if os.path.exists(flag_file):
@@ -224,7 +276,7 @@ def run_hardsub_pipeline(video_path, output_image_folder, options, progress_call
             thread.daemon = True # Cho phép chương trình chính thoát dù thread còn chạy
             thread.start()
     else:
-        logging.warning("VideoSubFinder not found. Skipping refinement step.")
+        logging.warning("VideoSubFinder CLI not found. Skipping refinement step.")
     
     # Trả về kết quả thô của EAST để hiển thị tạm thời
     cap = cv2.VideoCapture(video_path)

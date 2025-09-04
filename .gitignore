@@ -21,6 +21,8 @@ Thumbs.db
 settings.json
 app.log
 app_temp/
+# VSF CLI specific ignores
+assets/tools/vsf-cli/report.log
 
 # Distribution / packaging
 build/
@@ -28,17 +30,5 @@ dist/
 *.egg-info/
 /tham-khao
 
-/assets/tools/videosubfinder/Release_x64/TXTResults
-/assets/tools/videosubfinder/Release_x64/ILAImages
-/assets/tools/videosubfinder/Release_x64/ImagesJoined
-/assets/tools/videosubfinder/Release_x64/ISAImages
-/assets/tools/videosubfinder/Release_x64/RGBImages
-/assets/tools/videosubfinder/Release_x64/TestImages
-/assets/tools/videosubfinder/Release_x64/TXTImages
-
 # Log files
 /logs/
-
-# VideoSubFinder temporary files
-/assets/tools/videosubfinder/Release_x64/*.inf
-/assets/tools/videosubfinder/Release_x64/*.log
