@@ -15,7 +15,6 @@ from src.tool_path_manager import resource_path
 
 EAST_MODEL_PATH = os.path.join("assets", "tools", "frozen_east_text_detection.pb")
 
-# --- Các hàm helper ---
 def seconds_to_srt_time(seconds):
     if seconds < 0: seconds = 0
     total_seconds = int(seconds)
@@ -149,7 +148,6 @@ def run_hardsub_pipeline(video_path, output_image_folder, options, progress_call
     vsf_cli_filename = settings["hardsub_settings"].get("vsf_cli_executable", "videosubfinder-cli-cpu.exe")
     
     # Ghi đè lựa chọn CLI nếu use_gpu được bật trong options
-    # Ghi đè lựa chọn CLI nếu use_gpu được bật trong options
     if options.get("use_gpu", True):
         vsf_cli_filename = "videosubfinder-cli-gpu-cuda.exe"
     else:
@@ -159,7 +157,6 @@ def run_hardsub_pipeline(video_path, output_image_folder, options, progress_call
 
     if not os.path.exists(VSF_EXECUTABLE_PATH_CLI):
         logging.warning(f"VSF CLI executable not found at {VSF_EXECUTABLE_PATH_CLI}. Skipping refinement step.")
-        # Trả về kết quả thô của EAST để hiển thị tạm thời
         cap = cv2.VideoCapture(video_path)
         all_events_tmp = [("top", event) for event in all_top_events] + [("bottom", event) for event in all_bottom_events]
         for channel, event in all_events_tmp:
@@ -230,11 +227,9 @@ def run_hardsub_pipeline(video_path, output_image_folder, options, progress_call
                         
                         scan_val = scan_area_height_percent
                         if channel == 'top':
-                            # Đối với vùng trên: từ (1.0 - scan_val) đến 1.0 (từ dưới lên)
                             bottom_end_param = 1.0 - scan_val
                             top_end_param = 1.0
                         else: # bottom
-                            # Đối với vùng dưới: từ 0.0 đến scan_val (từ dưới lên)
                             bottom_end_param = 0.0
                             top_end_param = scan_val
 
@@ -243,7 +238,6 @@ def run_hardsub_pipeline(video_path, output_image_folder, options, progress_call
                             '-te', f'{top_end_param:.6f}',
                         ])
                         
-                        # Chạy VSF CLI và ghi lại output
                         logging.debug(f"Running VSF command: {' '.join(command_parts)}")
                         p = subprocess.Popen(
                             command_parts, 
@@ -253,7 +247,7 @@ def run_hardsub_pipeline(video_path, output_image_folder, options, progress_call
                             encoding='utf-8',
                             cwd=vsf_dir_norm
                         )
-                        stdout, stderr = p.communicate() # Đợi tiến trình hoàn thành
+                        stdout, stderr = p.communicate()
 
                         if p.returncode != 0:
                             logging.error(f"VSF process for event {i+1} failed with return code {p.returncode}.")
@@ -273,12 +267,11 @@ def run_hardsub_pipeline(video_path, output_image_folder, options, progress_call
 
             logging.info(f"Starting background VSF processing thread for {total_events} events...")
             thread = threading.Thread(target=vsf_worker)
-            thread.daemon = True # Cho phép chương trình chính thoát dù thread còn chạy
+            thread.daemon = True
             thread.start()
     else:
         logging.warning("VideoSubFinder CLI not found. Skipping refinement step.")
     
-    # Trả về kết quả thô của EAST để hiển thị tạm thời
     cap = cv2.VideoCapture(video_path)
     all_events_tmp = [("top", event) for event in all_top_events] + [("bottom", event) for event in all_bottom_events]
     for channel, event in all_events_tmp:

@@ -1,12 +1,13 @@
-# src/gui.py
 import os
 import shutil
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox, scrolledtext, font
 from tkextrafont import Font
+from tkinterdnd2 import DND_FILES, TkinterDnD
 import threading
 from PIL import Image, ImageTk, ImageFile
 import logging
+import time
 
 from src.app_context import AppContext
 from src.ui_components import SubtitleSelectionDialog, SessionSelectionDialog, create_ocr_controls, create_advanced_settings
@@ -30,14 +31,13 @@ class TextHandler(logging.Handler):
             self.text_widget.yview(tk.END)
         self.text_widget.after(0, append)
 
-class SubtitlePreviewer(tk.Tk):
-    # ... (__init__ và các hàm khác giữ nguyên)
+class SubtitlePreviewer(TkinterDnD.Tk):
     def __init__(self):
         super().__init__()
         self.title("Easy AI Subtitle OCR")
-        self.geometry("1100x1100")
+        self.geometry("1000x1000")
         self.minsize(1000, 1000)
-        self._center_window(1300, 1000)
+        self._center_window(1360, 1080)
         
         self.app_context = AppContext()
         self._init_vars()
@@ -55,6 +55,9 @@ class SubtitlePreviewer(tk.Tk):
             self.font = Font(file="assets/fonts/NotoSans-Regular.ttf", family="Noto Sans")
         except Exception as e:
             logging.error(f"Failed to load font: {e}")
+
+        self.drop_target_register(DND_FILES)
+        self.dnd_bind('<<Drop>>', self.handle_drop)
 
     def _init_vars(self):
         self.api_key_var = tk.StringVar(value=self.app_context.api_key)
@@ -83,6 +86,8 @@ class SubtitlePreviewer(tk.Tk):
         style.map("Highlighted.TNotebook.Tab", background=[("selected", selected_bg)])
         style.configure("TNotebook", tabposition='n')
         style.configure("Save.TButton", font=('Arial', 10, 'bold'), background="#cce0ff")
+        style.configure("HardsubAIO.TButton", font=('Arial', 10, 'bold'), background="#d4edda")
+        style.configure("SoftsubAIO.TButton", font=('Arial', 10, 'bold'), background="#d1ecf1")
 
     def _create_widgets(self):
         self.grid_columnconfigure(1, weight=1)
@@ -110,12 +115,12 @@ class SubtitlePreviewer(tk.Tk):
         content_frame.grid_columnconfigure(0, weight=1)
         api_frame = self._create_api_config_frame(content_frame)
         api_frame.grid(row=0, column=0, sticky="ew", pady=(0, 10))
-        notebook = ttk.Notebook(content_frame, style="Highlighted.TNotebook")
-        notebook.grid(row=1, column=0, sticky="ew", pady=(0, 10))
-        softsub_tab_frame = create_softsub_tab(notebook, self)
-        notebook.add(softsub_tab_frame, text="Softsub OCR")
-        hardsub_tab_frame = create_hardsub_tab(notebook, self)
-        notebook.add(hardsub_tab_frame, text="Hardsub OCR")
+        self.notebook = ttk.Notebook(content_frame, style="Highlighted.TNotebook")
+        self.notebook.grid(row=1, column=0, sticky="ew", pady=(0, 10))
+        softsub_tab_frame = create_softsub_tab(self.notebook, self)
+        self.notebook.add(softsub_tab_frame, text="Softsub OCR")
+        hardsub_tab_frame = create_hardsub_tab(self.notebook, self)
+        self.notebook.add(hardsub_tab_frame, text="Hardsub OCR")
         separator = ttk.Separator(content_frame, orient='horizontal')
         separator.grid(row=2, column=0, sticky='ew', pady=15)
         adv_settings_frame = create_advanced_settings(content_frame, self)
@@ -162,6 +167,18 @@ class SubtitlePreviewer(tk.Tk):
         self.time_label.grid(row=1, column=0, columnspan=3, sticky="ew", pady=5)
         self.btn_save = ttk.Button(nav_frame, text="Save to .SRT file", command=self.save_srt, style="Save.TButton")
         self.btn_save.grid(row=2, column=0, columnspan=3, sticky="ew", pady=(5, 2))
+        
+        aio_frame = ttk.Frame(nav_frame)
+        aio_frame.grid(row=3, column=0, columnspan=3, sticky="ew", pady=(5, 2))
+        aio_frame.columnconfigure(0, weight=1)
+        aio_frame.columnconfigure(1, weight=1)
+
+        self.btn_softsub_aio = ttk.Button(aio_frame, text="Softsub AIO", command=self.start_softsub_aio_thread, style="SoftsubAIO.TButton")
+        self.btn_softsub_aio.grid(row=0, column=0, sticky="ew", padx=(0, 2))
+        
+        self.btn_hardsub_aio = ttk.Button(aio_frame, text="Hardsub AIO", command=self.start_all_in_one_process_thread, style="HardsubAIO.TButton")
+        self.btn_hardsub_aio.grid(row=0, column=1, sticky="ew", padx=(2, 0))
+
         return nav_frame
 
     def _create_right_panel(self):
@@ -341,21 +358,42 @@ class SubtitlePreviewer(tk.Tk):
         if not self.app_context.source_file_path:
             messagebox.showerror("Error", "Source file path not available.")
             return
+
         source_path = self.app_context.source_file_path
         base_name = os.path.splitext(os.path.basename(source_path))[0]
+        
+        # Suggest a save location outside the temp folder
+        initial_dir = self.app_context.settings.get("last_save_dir", os.path.expanduser("~"))
         ocr_lang = self.ocr_lang_var.get().strip()
         lang_map = {'Vietnamese': 'vi', 'English': 'en', 'Japanese': 'ja', 'Chinese': 'zh','Korean': 'ko', 'French': 'fr', 'German': 'de', 'Spanish': 'es','Italian': 'it', 'Russian': 'ru', 'Portuguese': 'pt', 'Dutch': 'nl','Polish': 'pl', 'Turkish': 'tr', 'Arabic': 'ar', 'Hindi': 'hi','Thai': 'th', 'Indonesian': 'id', 'Malay': 'ms', 'Filipino': 'fil'}
         lang_code = lang_map.get(ocr_lang)
         file_name = f"{base_name}.{lang_code}.srt" if lang_code else f"{base_name}.srt"
-        srt_path = filedialog.asksaveasfilename(initialdir=os.path.dirname(source_path), initialfile=file_name, defaultextension=".srt", filetypes=[("SRT files", "*.srt")])
+        
+        srt_path = filedialog.asksaveasfilename(initialdir=initial_dir, initialfile=file_name, defaultextension=".srt", filetypes=[("SRT files", "*.srt")])
+        
         if not srt_path: return
+
         try:
+            # Save the SRT file
             with open(srt_path, 'w', encoding='utf-8') as f:
                 for i, sub in enumerate(self.app_context.subtitles):
                     f.write(f"{i + 1}\n{sub['start_srt']} --> {sub['end_srt']}\n{sub.get('text', '').strip()}\n\n")
-            messagebox.showinfo("Complete", f"SRT file saved to:\n{srt_path}")
+            
+            # If the source was from ytdlp, copy the video file as well
+            if self.app_context.source_file_is_from_ytdlp:
+                video_source_path = self.app_context.source_file_path
+                video_dest_path = os.path.join(os.path.dirname(srt_path), os.path.basename(video_source_path))
+                shutil.copy(video_source_path, video_dest_path)
+                logging.info(f"Copied video file to: {video_dest_path}")
+                messagebox.showinfo("Complete", f"SRT file and video saved to:\n{os.path.dirname(srt_path)}")
+            else:
+                messagebox.showinfo("Complete", f"SRT file saved to:\n{srt_path}")
+
+            # Save the last used directory
+            self.app_context.update_settings("last_save_dir", os.path.dirname(srt_path))
+
         except Exception as e:
-            messagebox.showerror("Error", f"Could not save SRT file: {e}")
+            messagebox.showerror("Error", f"Could not save file(s): {e}")
 
     def auto_load_models_on_startup(self):
         if self.api_key_var.get(): self.load_models()
@@ -401,6 +439,7 @@ class SubtitlePreviewer(tk.Tk):
 
     def select_source_file(self):
         self.app_context.cleanup_current_session_temp()
+        self.app_context.source_file_is_from_ytdlp = False # Reset flag
         self.ocr_completed = False
         source_path = filedialog.askopenfilename(title="Select Source", filetypes=[("All Supported", "*.mkv *.mp4 *.ts *.xml *.html"), ("Video", "*.mkv *.mp4 *.ts"), ("Timing", "*.xml *.html")])
         if not source_path: return
@@ -418,6 +457,7 @@ class SubtitlePreviewer(tk.Tk):
     
     def select_hardsub_video(self):
         self.app_context.cleanup_current_session_temp()
+        self.app_context.source_file_is_from_ytdlp = False # Reset flag
         self.ocr_completed = False
         source_path = filedialog.askopenfilename(title="Select Video for Hardsub OCR", filetypes=[("Video Files", "*.mkv *.mp4 *.ts")])
         if not source_path: return
@@ -428,7 +468,6 @@ class SubtitlePreviewer(tk.Tk):
 
     def start_hardsub_detection_thread(self):
         if not self.app_context.hardsub_video_path: return
-        self.app_context.cleanup_vsf_events()
         self.cancellation_event.clear()
         self._set_controls_state(tk.DISABLED, extraction_running=True)
         quality_val = self.hardsub_quality_var.get().replace('px', '')
@@ -514,7 +553,7 @@ class SubtitlePreviewer(tk.Tk):
         is_disabled = state == tk.DISABLED or ocr_running or extraction_running
         effective_state = tk.DISABLED if is_disabled else tk.NORMAL
         
-        for widget_name in ['btn_select_source', 'btn_load_session', 'btn_select_hardsub_video', 'load_models_button', 'btn_detect_hardsub']:
+        for widget_name in ['btn_select_source', 'btn_load_session', 'btn_select_hardsub_video', 'load_models_button', 'btn_detect_hardsub', 'btn_hardsub_aio', 'btn_softsub_aio']:
             if hasattr(self, widget_name):
                 widget = getattr(self, widget_name)
                 if widget_name == 'btn_detect_hardsub':
@@ -530,3 +569,269 @@ class SubtitlePreviewer(tk.Tk):
         self.btn_prev.config(state=tk.NORMAL if subtitles_loaded else tk.DISABLED)
         self.btn_next.config(state=tk.NORMAL if subtitles_loaded else tk.DISABLED)
         self.btn_save.config(state=tk.NORMAL if self.ocr_completed and not is_disabled else tk.DISABLED)
+        
+        hardsub_video_loaded = bool(self.app_context.hardsub_video_path) and not is_disabled
+        self.btn_hardsub_aio.config(state=tk.NORMAL if hardsub_video_loaded else tk.DISABLED)
+        
+        # Placeholder for softsub AIO logic
+        softsub_ready = bool(self.app_context.source_file_path) and not self.app_context.hardsub_video_path and not is_disabled
+        self.btn_softsub_aio.config(state=tk.NORMAL if softsub_ready else tk.DISABLED)
+
+    def handle_drop(self, event):
+        filepath = event.data.strip('{}')
+        if not os.path.exists(filepath):
+            logging.error(f"Dropped file path does not exist: {filepath}")
+            return
+        
+        selected_tab_index = self.notebook.index(self.notebook.select())
+
+        if selected_tab_index == 0: # Softsub tab
+            self.handle_softsub_file_drop(filepath)
+        elif selected_tab_index == 1: # Hardsub tab
+            self.handle_hardsub_file_drop(filepath)
+
+    def handle_softsub_file_drop(self, source_path):
+        self.app_context.cleanup_current_session_temp()
+        self.app_context.source_file_is_from_ytdlp = False # Reset flag
+        self.ocr_completed = False
+        self.app_context.source_file_path = source_path
+        self.cancellation_event.clear()
+        self._set_controls_state(tk.DISABLED, extraction_running=True)
+        ext = os.path.splitext(source_path)[1].lower()
+        if ext in ['.mkv', '.mp4', '.ts']:
+            threading.Thread(target=self.handle_video_file, args=(source_path,), daemon=True).start()
+        elif ext in ['.xml', '.html']:
+            threading.Thread(target=self.handle_timing_file, args=(source_path,), daemon=True).start()
+        else:
+            messagebox.showerror("Error", "Unsupported file format for Softsub OCR.")
+            self._set_controls_state(tk.NORMAL)
+
+    def handle_hardsub_file_drop(self, source_path):
+        self.app_context.cleanup_current_session_temp()
+        self.app_context.source_file_is_from_ytdlp = False # Reset flag
+        self.ocr_completed = False
+        ext = os.path.splitext(source_path)[1].lower()
+        if ext not in ['.mkv', '.mp4', '.ts']:
+            messagebox.showerror("Error", "Unsupported file format for Hardsub OCR. Please drop a video file.")
+            return
+        self.app_context.hardsub_video_path = source_path
+        self.app_context.source_file_path = source_path
+        self.btn_detect_hardsub.config(state=tk.NORMAL)
+        logging.info(f"Selected hardsub video via drop: {source_path}")
+
+    def start_video_download_thread(self):
+        video_url = self.video_url_var.get()
+        if not video_url:
+            messagebox.showwarning("Warning", "Please enter a video URL.")
+            return
+        
+        self.app_context.cleanup_current_session_temp()
+        self.ocr_completed = False
+        self.cancellation_event.clear()
+        self._set_controls_state(tk.DISABLED, extraction_running=True)
+        
+        threading.Thread(target=self.handle_video_download, args=(video_url,), daemon=True).start()
+
+    def handle_video_download(self, video_url):
+        downloaded_path, error = self.app_context.download_video_from_url(video_url, self.update_ocr_progress)
+        
+        def update_ui():
+            if error:
+                messagebox.showerror("Download Error", error)
+                self.status_label.config(text="Download failed.")
+            else:
+                self.status_label.config(text="Video downloaded successfully.")
+                self.app_context.hardsub_video_path = downloaded_path
+                self.app_context.source_file_path = downloaded_path
+                self.btn_detect_hardsub.config(state=tk.NORMAL)
+                logging.info(f"Video downloaded and selected: {downloaded_path}")
+            
+            self._set_controls_state(tk.NORMAL)
+
+        self.after(0, update_ui)
+
+    def save_srt_auto(self):
+        self.sync_text_from_widget()
+        if not self.app_context.subtitles:
+            logging.error("Auto-save failed: No subtitles available.")
+            return None
+
+        source_path = self.app_context.source_file_path
+        if not source_path:
+            logging.error("Auto-save failed: Source file path not available.")
+            return None
+
+        base_name = os.path.splitext(os.path.basename(source_path))[0]
+        
+        ocr_lang = self.ocr_lang_var.get().strip()
+        lang_map = {'Vietnamese': 'vi', 'English': 'en', 'Japanese': 'ja', 'Chinese': 'zh','Korean': 'ko', 'French': 'fr', 'German': 'de', 'Spanish': 'es','Italian': 'it', 'Russian': 'ru', 'Portuguese': 'pt', 'Dutch': 'nl','Polish': 'pl', 'Turkish': 'tr', 'Arabic': 'ar', 'Hindi': 'hi','Thai': 'th', 'Indonesian': 'id', 'Malay': 'ms', 'Filipino': 'fil'}
+        lang_code = lang_map.get(ocr_lang)
+        file_name = f"{base_name}.{lang_code}.srt" if lang_code else f"{base_name}.srt"
+        
+        if self.app_context.source_file_is_from_ytdlp:
+            save_dir = self.app_context.current_session_dir
+        else:
+            save_dir = os.path.dirname(source_path)
+
+        srt_path = os.path.join(save_dir, file_name)
+
+        try:
+            with open(srt_path, 'w', encoding='utf-8') as f:
+                for i, sub in enumerate(self.app_context.subtitles):
+                    f.write(f"{i + 1}\n{sub['start_srt']} --> {sub['end_srt']}\n{sub.get('text', '').strip()}\n\n")
+            logging.info(f"SRT file automatically saved to: {srt_path}")
+            return srt_path
+        except Exception as e:
+            logging.error(f"Could not auto-save file to {srt_path}: {e}")
+            return None
+
+    def start_all_in_one_process_thread(self):
+        if not self.app_context.hardsub_video_path:
+            messagebox.showwarning("Warning", "Please select a video for hardsub OCR first.")
+            return
+        if not all([self.app_context.api_key, self.app_context.model_name]):
+            messagebox.showwarning("Missing Info", "API Key and Model are required.")
+            return
+
+        self.cancellation_event.clear()
+        self._set_controls_state(tk.DISABLED, extraction_running=True)
+        threading.Thread(target=self.run_all_in_one_process, daemon=True).start()
+
+    def run_all_in_one_process(self):
+        try:
+            # 1. Hardsub detection
+            self.after(0, lambda: self.status_label.config(text="[1/4] Starting hardsub detection..."))
+            video_path = self.app_context.hardsub_video_path
+            quality_val = self.hardsub_quality_var.get().replace('px', '')
+            options = {
+                "scan_top": self.hardsub_scan_top_var.get(), 
+                "scan_bottom": self.hardsub_scan_bottom_var.get(), 
+                "scan_area_height": self.hardsub_scan_area_height_var.get(), 
+                "use_gpu": self.hardsub_use_gpu_var.get(), 
+                "confidence": self.hardsub_confidence_var.get(), 
+                "quality": int(quality_val)
+            }
+            
+            subtitles, error, flag_file = self.app_context.process_hardsub_video(video_path, options, self.update_ocr_progress, self.cancellation_event)
+
+            if self.cancellation_event.is_set(): return
+            if error:
+                self.after(0, lambda: messagebox.showerror("All-in-One Error", f"Hardsub detection failed: {error}"))
+                return
+
+            if subtitles:
+                self.after(0, lambda: self.navigate_to(0))
+
+            # 2. Wait for VSF if needed
+            if flag_file:
+                self.after(0, lambda: self.status_label.config(text="[2/4] VSF is running... This may take a while."))
+                while os.path.exists(flag_file):
+                    if self.cancellation_event.is_set(): return
+                    time.sleep(2)
+                
+                self.after(0, lambda: self.status_label.config(text="VSF complete. Merging results..."))
+                refined_subtitles = self.app_context.merge_vsf_results()
+                if refined_subtitles:
+                    self.after(0, lambda: self.navigate_to(0))
+
+            if not self.app_context.subtitles:
+                self.after(0, lambda: messagebox.showwarning("All-in-One Info", "No subtitles found after detection phase."))
+                return
+
+            # 3. Run OCR
+            self.after(0, lambda: self.status_label.config(text="[3/4] Starting OCR process..."))
+            ocr_subtitles, ocr_message = self.app_context.run_ocr_pipeline(self.cancellation_event, self.update_ocr_progress)
+
+            if self.cancellation_event.is_set(): return
+            if not ocr_subtitles:
+                self.after(0, lambda: messagebox.showerror("All-in-One Error", f"OCR process failed: {ocr_message}"))
+                return
+            
+            self.ocr_completed = True
+            self.after(0, lambda: self.status_label.config(text="OCR Complete!"))
+            self.after(0, lambda: self.navigate_to(0))
+
+            # 4. Save SRT
+            self.after(0, lambda: self.status_label.config(text="[4/4] Saving SRT file..."))
+            saved_path = self.save_srt_auto()
+
+            if saved_path:
+                self.after(0, lambda: messagebox.showinfo("All-in-One Complete", f"Process finished successfully.\nSRT file saved to:\n{saved_path}"))
+            else:
+                self.after(0, lambda: messagebox.showerror("All-in-One Error", "Failed to save the SRT file."))
+
+        except Exception as e:
+            logging.error(f"An error occurred during the all-in-one process: {e}")
+            self.after(0, lambda: messagebox.showerror("All-in-One Error", f"An unexpected error occurred: {e}"))
+        finally:
+            if self.cancellation_event.is_set():
+                self.after(0, lambda: self.status_label.config(text="Operation cancelled."))
+            self.after(0, lambda: self._set_controls_state(tk.NORMAL))
+
+    def start_softsub_aio_thread(self):
+        if not self.app_context.source_file_path:
+            messagebox.showwarning("Warning", "Please select a source video file first.")
+            return
+        if not all([self.app_context.api_key, self.app_context.model_name]):
+            messagebox.showwarning("Missing Info", "API Key and Model are required.")
+            return
+
+        self.cancellation_event.clear()
+        self._set_controls_state(tk.DISABLED, extraction_running=True)
+        threading.Thread(target=self.run_softsub_aio_process, daemon=True).start()
+
+    def run_softsub_aio_process(self):
+        try:
+            video_path = self.app_context.source_file_path
+            
+            # 1. Inspect for subtitle streams
+            self.after(0, lambda: self.status_label.config(text="[1/4] Scanning for subtitle streams..."))
+            streams, error = self.app_context.inspect_video_subtitles(video_path)
+            if self.cancellation_event.is_set(): return
+            if error or not streams:
+                self.after(0, lambda: messagebox.showerror("Softsub AIO Error", error or "No image subtitle streams found."))
+                return
+
+            stream_index = streams[0]['index'] # Automatically select the first stream
+            self.after(0, lambda: self.status_label.config(text=f"Found stream: {streams[0]['tags'].get('title', 'Untitled')}. Extracting..."))
+
+            # 2. Extract subtitles
+            self.after(0, lambda: self.status_label.config(text="[2/4] Extracting subtitles..."))
+            _, _, error = self.app_context.extract_subtitles_from_video(video_path, stream_index, self.update_extraction_progress, self.cancellation_event)
+            
+            if self.cancellation_event.is_set(): return
+            if error:
+                self.after(0, lambda: messagebox.showerror("Softsub AIO Error", f"Subtitle extraction failed: {error}"))
+                return
+
+            self.after(0, lambda: self.navigate_to(0))
+
+            # 3. Run OCR
+            self.after(0, lambda: self.status_label.config(text="[3/4] Starting OCR process..."))
+            ocr_subtitles, ocr_message = self.app_context.run_ocr_pipeline(self.cancellation_event, self.update_ocr_progress)
+
+            if self.cancellation_event.is_set(): return
+            if not ocr_subtitles:
+                self.after(0, lambda: messagebox.showerror("Softsub AIO Error", f"OCR process failed: {ocr_message}"))
+                return
+            
+            self.ocr_completed = True
+            self.after(0, lambda: self.status_label.config(text="OCR Complete!"))
+            self.after(0, lambda: self.navigate_to(0))
+
+            # 4. Save SRT
+            self.after(0, lambda: self.status_label.config(text="[4/4] Saving SRT file..."))
+            saved_path = self.save_srt_auto()
+
+            if saved_path:
+                self.after(0, lambda: messagebox.showinfo("Softsub AIO Complete", f"Process finished successfully.\nSRT file saved to:\n{saved_path}"))
+            else:
+                self.after(0, lambda: messagebox.showerror("Softsub AIO Error", "Failed to save the SRT file."))
+
+        except Exception as e:
+            logging.error(f"An error occurred during the softsub AIO process: {e}")
+            self.after(0, lambda: messagebox.showerror("Softsub AIO Error", f"An unexpected error occurred: {e}"))
+        finally:
+            if self.cancellation_event.is_set():
+                self.after(0, lambda: self.status_label.config(text="Operation cancelled."))
+            self.after(0, lambda: self._set_controls_state(tk.NORMAL))

@@ -9,6 +9,7 @@ import logging
 from datetime import datetime
 import threading
 import re
+import yt_dlp
 
 from src.settings import load_settings, save_settings, TEMP_DIR_NAME, APP_TEMP_PATH
 from src.video_processor import inspect_video_subtitles, extract_pgs_subtitles
@@ -18,7 +19,6 @@ from src.hardsub_processor import run_hardsub_pipeline, vsf_time_to_seconds, sec
 
 
 def resource_path(relative_path: str) -> str:
-    # ... (Giữ nguyên)
     try:
         base_path = sys._MEIPASS
     except Exception:
@@ -26,7 +26,6 @@ def resource_path(relative_path: str) -> str:
     return os.path.join(base_path, relative_path)
 
 class AppContext:
-    # ... (__init__ và các hàm khác giữ nguyên)
     def __init__(self):
         self.settings = load_settings()
         self.api_key = self.settings.get("api_key", "")
@@ -51,6 +50,7 @@ class AppContext:
         self.current_session_dir = None
         self.hardsub_video_path = None
         self.source_file_path = None
+        self.source_file_is_from_ytdlp = False
         self._ensure_app_temp_dir()
 
     def _ensure_app_temp_dir(self):
@@ -78,6 +78,7 @@ class AppContext:
         self.current_index = -1
         self.hardsub_video_path = None
         self.source_file_path = None
+        self.source_file_is_from_ytdlp = False
 
     def cleanup_vsf_events(self):
         logging.info("Cleaning up leftover VSF event directories...")
@@ -191,11 +192,16 @@ class AppContext:
         
     def process_hardsub_video(self, video_path: str, options: dict, progress_callback=None, cancellation_event=None) -> tuple[list | None, str | None, str | None]:
         logging.info(f"Starting hardsub analysis for: {os.path.basename(video_path)}")
-        base_name = os.path.splitext(os.path.basename(video_path))[0]
-        session_dir = self._create_new_session_dir(f"HARDSUB_{base_name}")
+        
+        if self.current_session_dir:
+            session_dir = self.current_session_dir
+            logging.info(f"Reusing existing session directory: {session_dir}")
+        else:
+            base_name = os.path.splitext(os.path.basename(video_path))[0]
+            session_dir = self._create_new_session_dir(f"HARDSUB_{base_name}")
+        
         self.image_folder = os.path.join(session_dir, "images")
         
-        # SỬA LỖI Ở ĐÂY: Nhận đúng 3 giá trị
         subtitles, error, flag_file = run_hardsub_pipeline(video_path, self.image_folder, options, progress_callback, cancellation_event)
 
         if error:
@@ -317,3 +323,53 @@ class AppContext:
         except FileNotFoundError:
             logging.warning("assets/prompt.txt not found. Using default prompt.")
             return self.settings.get("ocr_prompt", "Extract text from image.")
+
+    def download_video_from_url(self, video_url: str, progress_callback=None) -> tuple[str | None, str | None]:
+        logging.info(f"Attempting to download video from URL: {video_url}")
+
+        try:
+            with yt_dlp.YoutubeDL({'quiet': True, 'nocheckcertificate': True, 'extract_flat': 'in_playlist'}) as ydl:
+                info = ydl.extract_info(video_url, download=False)
+                video_title = info.get('title', 'YTDLP_Download')
+        except Exception as e:
+            logging.error(f"Could not extract video info: {e}")
+            video_title = "YTDLP_Download"
+
+        session_dir = self._create_new_session_dir(f"HARDSUB_{video_title}")
+        self.source_file_is_from_ytdlp = True
+        
+        def progress_hook(d):
+            if d['status'] == 'downloading':
+                total_bytes = d.get('total_bytes') or d.get('total_bytes_estimate')
+                if total_bytes:
+                    percentage = (d['downloaded_bytes'] / total_bytes) * 100
+                    if progress_callback:
+                        self.progress_callback_wrapper(progress_callback, f"Downloading... {percentage:.1f}%", percentage)
+            elif d['status'] == 'finished':
+                if progress_callback:
+                    self.progress_callback_wrapper(progress_callback, "Download finished, processing...", 100)
+
+        ydl_opts = {
+            'format': 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
+            'outtmpl': os.path.join(session_dir, '%(title)s.%(ext)s'),
+            'progress_hooks': [progress_hook],
+            'nocheckcertificate': True,
+        }
+
+        try:
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                info = ydl.extract_info(video_url, download=True)
+                downloaded_file = ydl.prepare_filename(info)
+            
+            logging.info(f"Video downloaded successfully to: {downloaded_file}")
+            return downloaded_file, None
+        except Exception as e:
+            logging.error(f"yt-dlp failed to download video: {e}")
+            return None, str(e)
+
+    def progress_callback_wrapper(self, callback, message, percentage):
+        # Helper to ensure callback is called from the main thread if needed
+        # In this implementation, we assume the GUI's progress update is thread-safe
+        # or handled by `after()` as it is in the current GUI structure.
+        if callback:
+            callback(message, percentage)

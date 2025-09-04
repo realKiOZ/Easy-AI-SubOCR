@@ -1,5 +1,3 @@
-# src/ocr.py
-
 import os
 import base64
 import json

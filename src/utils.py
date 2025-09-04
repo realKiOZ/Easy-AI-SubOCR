@@ -1,20 +1,12 @@
-# src/utils.py
-
 import xml.etree.ElementTree as ET
 from bs4 import BeautifulSoup
 import logging
 import shutil
 import subprocess
 import os
-from bs4 import BeautifulSoup
-import xml.etree.ElementTree as ET
 import re
 
 def check_tools_availability():
-    """
-    Checks for the availability of required command-line tools (ffmpeg, mkvextract, java).
-    Returns a list of missing tools.
-    """
     missing_tools = []
     tools = ["ffmpeg", "mkvextract", "java"]
     for tool in tools:
@@ -23,7 +15,6 @@ def check_tools_availability():
     return missing_tools
 
 def parse_bdsup2sub_xml(xml_path: str) -> list | None:
-    """Parses an XML file from BDSup2Sub to get timing and image file names."""
     try:
         tree = ET.parse(xml_path)
         root = tree.getroot()
@@ -50,7 +41,6 @@ def parse_bdsup2sub_xml(xml_path: str) -> list | None:
         return None
 
 def format_time_for_srt(tc: str, frame_rate: float) -> str:
-    """Converts timecode HH:MM:SS:FF to SRT format HH:MM:SS,ms."""
     try:
         parts = tc.split(':')
         h, m, s, f = [int(p) for p in parts]
@@ -61,10 +51,6 @@ def format_time_for_srt(tc: str, frame_rate: float) -> str:
         return "00:00:00,000"
 
 def parse_subtitle_edit_html(html_path: str) -> list | None:
-    """
-    Parses an HTML file from Subtitle Edit to get timing and image file names.
-    Supports both table format and body-text format.
-    """
     try:
         with open(html_path, 'r', encoding='utf-8') as f:
             content = f.read()
@@ -72,10 +58,9 @@ def parse_subtitle_edit_html(html_path: str) -> list | None:
         soup = BeautifulSoup(content, 'lxml')
         events = []
 
-        # Case 1: Check for old table format
         rows = soup.find_all('tr')
         if len(rows) > 1:
-            for row in rows[1:]: # Skip header row
+            for row in rows[1:]:
                 cols = row.find_all('td')
                 if len(cols) < 5: continue
                 time_str = cols[1].text.strip()
@@ -89,7 +74,6 @@ def parse_subtitle_edit_html(html_path: str) -> list | None:
                     })
             return events
 
-        # Case 2: If no table, try parsing new body-text format using regex
         pattern = re.compile(r"#\d+:([\d:.,]+)->([\d:.,]+).*?src='(.*?)'")
         matches = pattern.findall(content)
         
@@ -98,11 +82,11 @@ def parse_subtitle_edit_html(html_path: str) -> list | None:
                 t_str = t_str.replace('.', ',')
                 parts = t_str.split(':')
                 
-                if len(parts) == 3: # H:MM:SS,ms
+                if len(parts) == 3:
                     h, m, s_ms = parts
                     s, ms = s_ms.split(',')
                     return f"{int(h):02d}:{int(m):02d}:{int(s):02d},{ms}"
-                elif len(parts) == 2: # M:SS,ms
+                elif len(parts) == 2:
                     m, s_ms = parts
                     s, ms = s_ms.split(',')
                     return f"00:{int(m):02d}:{int(s):02d},{ms}"
@@ -123,7 +107,6 @@ def parse_subtitle_edit_html(html_path: str) -> list | None:
         return None
 
 def is_cuda_available():
-    """Kiểm tra xem OpenCV có thể sử dụng CUDA hay không."""
     try:
         import cv2
         return cv2.cuda.getCudaEnabledDeviceCount() > 0

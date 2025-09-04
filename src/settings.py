@@ -1,4 +1,3 @@
-# src/settings.py
 import json
 import os
 import logging
@@ -6,6 +5,7 @@ import logging
 SETTINGS_FILE = "settings.json"
 TEMP_DIR_NAME = "app_temp"
 APP_TEMP_PATH = os.path.abspath(TEMP_DIR_NAME)
+DEFAULT_NUM_THREADS = 4
 
 DEFAULT_SETTINGS = {
     "api_key": "",
@@ -14,7 +14,7 @@ DEFAULT_SETTINGS = {
     "max_retries": 5,
     "ocr_language": "Auto",
     "generation_config": {
-        "temperature": 0.3,
+        "temperature": 0.25,
         "top_p": 0.95,
         "top_k": 40
     },
@@ -30,7 +30,7 @@ DEFAULT_SETTINGS = {
         "scan_bottom": True,
         "scan_area_height": 25,
         "use_gpu": True,
-        "confidence": 0.3,
+        "confidence": 0.25,
         "quality": "320px"
     },
     "last_failed_batches": []

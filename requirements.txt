@@ -9,3 +9,5 @@ numpy
 tqdm
 beautifulsoup4
 lxml
+tkinterdnd2
+yt-dlp

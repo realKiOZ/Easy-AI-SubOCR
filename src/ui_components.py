@@ -1,5 +1,3 @@
-# src/ui_components.py
-
 import tkinter as tk
 from tkinter import ttk
 
@@ -70,6 +68,17 @@ class SessionSelectionDialog(tk.Toplevel):
 
         cancel_button = ttk.Button(button_frame, text="Cancel", command=self.destroy)
         cancel_button.pack(side=tk.RIGHT, padx=5)
+
+    def _center_dialog(self, width, height):
+        self.update_idletasks()
+        parent_x = self.master.winfo_x()
+        parent_y = self.master.winfo_y()
+        parent_width = self.master.winfo_width()
+        parent_height = self.master.winfo_height()
+
+        x = parent_x + (parent_width // 2) - (width // 2)
+        y = parent_y + (parent_height // 2) - (height // 2)
+        self.geometry(f'{width}x{height}+{x}+{y}')
         
     def on_ok(self):
         selection = self.listbox.curselection()
@@ -78,7 +87,6 @@ class SessionSelectionDialog(tk.Toplevel):
         self.destroy()
 
 def create_ocr_controls(parent, gui_instance):
-    """Tạo các control chung cho OCR (nút, status, progress bar)."""
     frame = ttk.Frame(parent)
     frame.columnconfigure(0, weight=1)
     frame.columnconfigure(1, weight=1)
@@ -110,16 +118,13 @@ def create_ocr_controls(parent, gui_instance):
     return frame
 
 def create_advanced_settings(parent, gui_instance):
-    """Tạo frame Cài đặt Nâng cao."""
     adv_frame = ttk.LabelFrame(parent, text="Advanced OCR Settings", padding=10)
     adv_frame.columnconfigure(1, weight=1)
     adv_frame.columnconfigure(3, weight=1)
     
-    # Batch Size
     ttk.Label(adv_frame, text="Batch Size:").grid(row=0, column=0, sticky="w", pady=2)
     ttk.Spinbox(adv_frame, from_=1, to=500, textvariable=gui_instance.batch_size_var, command=gui_instance.save_advanced_settings, wrap=True, width=5).grid(row=0, column=1, sticky="w", padx=5, pady=(5,0))
     
-    # OCR Language
     ttk.Label(adv_frame, text="OCR Language:").grid(row=0, column=2, sticky="w", pady=(5,0), padx=(10,0))
     ocr_lang_combobox = ttk.Combobox(adv_frame, textvariable=gui_instance.ocr_lang_var, width=12)
     ocr_lang_combobox['values'] = ['Auto', 'Vietnamese', 'English', 'Japanese', 'Chinese', 'Korean', 'French', 'German', 'Spanish', 'Italian', 'Russian', 'Portuguese', 'Dutch', 'Polish', 'Turkish', 'Arabic', 'Hindi', 'Thai', 'Indonesian', 'Malay', 'Filipino']
@@ -127,7 +132,6 @@ def create_advanced_settings(parent, gui_instance):
     ocr_lang_combobox.bind("<<ComboboxSelected>>", gui_instance.save_advanced_settings)
     ocr_lang_combobox.bind("<FocusOut>", gui_instance.save_advanced_settings)
 
-    # Temperature
     ttk.Label(adv_frame, text="Temperature:").grid(row=1, column=0, sticky="w", pady=(5,0))
     temp_scale = ttk.Scale(adv_frame, from_=0.0, to=2.0, variable=gui_instance.temp_var, command=gui_instance.on_scale_change)
     temp_scale.grid(row=1, column=1, columnspan=2, sticky="ew", padx=5, pady=(5,0))
