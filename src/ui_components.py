@@ -91,7 +91,7 @@ def create_ocr_controls(parent, gui_instance):
     frame.columnconfigure(0, weight=1)
     frame.columnconfigure(1, weight=1)
 
-    btn_start_ocr = ttk.Button(frame, text="Start OCR", command=gui_instance.start_ocr_thread)
+    btn_start_ocr = ttk.Button(frame, text="Start OCR", command=gui_instance.start_ocr_thread, style="Primary.TButton")
     btn_start_ocr.grid(row=0, column=0, sticky="ew", padx=(0, 2), pady=2)
     gui_instance.btn_start_ocr = btn_start_ocr
 
@@ -107,13 +107,13 @@ def create_ocr_controls(parent, gui_instance):
     status_frame.grid(row=2, column=0, columnspan=2, sticky="ew", pady=5)
     status_frame.pack_propagate(False)
     
-    status_label = ttk.Label(status_frame, text="...", wraplength=300, justify=tk.LEFT)
+    status_label = ttk.Label(status_frame, text="Ready.", wraplength=300, justify=tk.LEFT)
     status_label.pack(fill=tk.BOTH, expand=True)
     gui_instance.status_label = status_label
 
-    progress_bar = ttk.Progressbar(frame, mode='determinate')
-    progress_bar.grid(row=3, column=0, columnspan=2, sticky="ew")
-    gui_instance.progress_bar = progress_bar
+    # progress_bar = ttk.Progressbar(frame, mode='determinate')
+    # progress_bar.grid(row=3, column=0, columnspan=2, sticky="ew")
+    # gui_instance.progress_bar = progress_bar
 
     return frame
 

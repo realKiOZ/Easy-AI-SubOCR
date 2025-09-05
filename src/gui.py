@@ -12,7 +12,7 @@ import time
 from src.app_context import AppContext
 from src.ui_components import SubtitleSelectionDialog, SessionSelectionDialog, create_ocr_controls, create_advanced_settings
 from src.utils import check_tools_availability, is_cuda_available
-from src.settings import TEMP_DIR_NAME, APP_TEMP_PATH
+from src.settings import TEMP_DIR_NAME, APP_TEMP_PATH, DEFAULT_NUM_THREADS
 from src.softsub_tab import create_softsub_tab
 from src.hardsub_tab import create_hardsub_tab
 
@@ -46,6 +46,7 @@ class SubtitlePreviewer(TkinterDnD.Tk):
         self._create_widgets()
         self._setup_logging()
         
+        self.after(10, self.toggle_hardsub_settings)
         self.after(100, self.auto_load_models_on_startup)
         self.after(200, self.check_required_tools)
         self.after(300, self.check_cuda_support)
@@ -64,20 +65,33 @@ class SubtitlePreviewer(TkinterDnD.Tk):
         self.model_var = tk.StringVar(value=self.app_context.model_name)
         self.batch_size_var = tk.IntVar(value=self.app_context.batch_size)
         config = self.app_context.generation_config
-        self.temp_var = tk.DoubleVar(value=config.get("temperature", 0.5))
+        self.temp_var = tk.DoubleVar(value=round(config.get("temperature", 0.5), 2))
         self.temp_display_var = tk.StringVar(value=f"{self.temp_var.get():.2f}")
         self.ocr_lang_var = tk.StringVar(value=self.app_context.ocr_language)
         self.cancellation_event = threading.Event()
         self.ocr_completed = False
-        hardsub_settings = self.app_context.settings.get("hardsub_settings", {})
-        self.hardsub_scan_top_var = tk.BooleanVar(value=hardsub_settings.get("scan_top", True))
-        self.hardsub_scan_bottom_var = tk.BooleanVar(value=hardsub_settings.get("scan_bottom", True))
-        self.hardsub_scan_area_height_var = tk.IntVar(value=hardsub_settings.get("scan_area_height", 30))
+        
+        self.hardsub_process_var = tk.StringVar(value="vsf_only")
+        
+        common_settings = self.app_context.settings.get("common_hardsub_settings", {})
+        self.hardsub_scan_top_var = tk.BooleanVar(value=common_settings.get("scan_top", True))
+        self.hardsub_scan_bottom_var = tk.BooleanVar(value=common_settings.get("scan_bottom", True))
+        self.hardsub_scan_area_height_var = tk.IntVar(value=common_settings.get("scan_area_height", 30))
         self.hardsub_scan_area_height_display_var = tk.StringVar(value=f"{self.hardsub_scan_area_height_var.get()}%")
-        self.hardsub_use_gpu_var = tk.BooleanVar(value=hardsub_settings.get("use_gpu", True))
-        self.hardsub_confidence_var = tk.DoubleVar(value=hardsub_settings.get("confidence", 0.5))
-        self.hardsub_confidence_display_var = tk.StringVar(value=f"{self.hardsub_confidence_var.get():.2f}")
-        self.hardsub_quality_var = tk.StringVar(value=hardsub_settings.get("quality", '320px'))
+
+        east_settings = self.app_context.settings.get("east_settings", {})
+        self.east_use_gpu_var = tk.BooleanVar(value=east_settings.get("use_gpu", True))
+        self.east_confidence_var = tk.DoubleVar(value=round(east_settings.get("confidence", 0.5), 2))
+        self.east_confidence_display_var = tk.StringVar(value=f"{self.east_confidence_var.get():.2f}")
+        self.east_quality_var = tk.StringVar(value=east_settings.get("quality", '320px'))
+
+        vsf_adv_settings = self.app_context.settings.get("vsf_adv_settings", {})
+        self.vsf_moderate_threshold_var = tk.DoubleVar(value=round(vsf_adv_settings.get("moderate_threshold", 0.25), 2))
+        self.vsf_moderate_threshold_display_var = tk.StringVar(value=f"{self.vsf_moderate_threshold_var.get():.2f}")
+        self.vsf_moderate_threshold_scaled_var = tk.DoubleVar(value=round(vsf_adv_settings.get("moderate_threshold_scaled", 0.25), 2))
+        self.vsf_moderate_threshold_scaled_display_var = tk.StringVar(value=f"{self.vsf_moderate_threshold_scaled_var.get():.2f}")
+        self.vsf_image_scale_var = tk.IntVar(value=vsf_adv_settings.get("image_scale", 4))
+        self.vsf_image_scale_display_var = tk.StringVar(value=f"{self.vsf_image_scale_var.get()}")
 
     def _configure_styles(self):
         style = ttk.Style(self)
@@ -88,6 +102,9 @@ class SubtitlePreviewer(TkinterDnD.Tk):
         style.configure("Save.TButton", font=('Arial', 11, 'bold'), padding=[0, 5], background="#cce0ff")
         style.configure("HardsubAIO.TButton", font=('Arial', 11, 'bold'), padding=[0, 5], background="#d4edda")
         style.configure("SoftsubAIO.TButton", font=('Arial', 11, 'bold'), padding=[0, 5], background="#d1ecf1")
+        
+        style.configure("Accent.TButton", font=('Arial', 11, 'bold'), padding=[0, 5], background="#d4edda") # Green
+        style.configure("Primary.TButton", font=('Arial', 11, 'bold'), padding=[0, 5], background="#d1ecf1") # Blue
 
     def _create_widgets(self):
         self.grid_columnconfigure(0, weight=1, minsize=380)
@@ -112,10 +129,10 @@ class SubtitlePreviewer(TkinterDnD.Tk):
         self.notebook.grid(row=1, column=0, sticky="nsew")
         
         softsub_tab_frame = create_softsub_tab(self.notebook, self)
-        self.notebook.add(softsub_tab_frame, text="Softsub tab")
+        self.notebook.add(softsub_tab_frame, text="Softsub")
         
         hardsub_tab_frame = create_hardsub_tab(self.notebook, self)
-        self.notebook.add(hardsub_tab_frame, text="Hardsub tab")
+        self.notebook.add(hardsub_tab_frame, text="Hardsub")
         
         return left_container
 
@@ -126,7 +143,6 @@ class SubtitlePreviewer(TkinterDnD.Tk):
         right_container.grid_rowconfigure(2, weight=2) # Nav/OCR
         right_container.grid_rowconfigure(3, weight=1) # Log
 
-        # Top controls
         top_controls_frame = ttk.Frame(right_container)
         top_controls_frame.grid(row=0, column=0, sticky="ew", pady=(0, 5))
         top_controls_frame.grid_columnconfigure(0, weight=1)
@@ -142,7 +158,6 @@ class SubtitlePreviewer(TkinterDnD.Tk):
         save_aio_frame = self._create_save_aio_frame(top_controls_frame)
         save_aio_frame.grid(row=0, column=1, sticky="nsew", padx=(5, 0))
 
-        # Image Preview
         image_container = ttk.LabelFrame(right_container, text="Frame Preview", padding=10)
         image_container.grid(row=1, column=0, sticky="nsew", pady=(0, 5))
         image_container.grid_propagate(False)
@@ -151,7 +166,6 @@ class SubtitlePreviewer(TkinterDnD.Tk):
         self.image_label = ttk.Label(image_container, text="", anchor="center", background="gray")
         self.image_label.grid(row=0, column=0, sticky="nsew")
 
-        # Navigation & OCR Result
         nav_ocr_frame = ttk.Frame(right_container)
         nav_ocr_frame.grid(row=2, column=0, sticky="nsew", pady=5)
         nav_ocr_frame.grid_columnconfigure(1, weight=1)
@@ -170,12 +184,11 @@ class SubtitlePreviewer(TkinterDnD.Tk):
         self.text_editor = scrolledtext.ScrolledText(ocr_result_frame, wrap=tk.WORD, font=self.text_font, height=4)
         self.text_editor.grid(row=0, column=0, sticky="nsew")
 
-        # Log
         log_frame = ttk.LabelFrame(right_container, text="Log", padding=5)
         log_frame.grid(row=3, column=0, sticky="nsew", pady=(5, 0))
         log_frame.grid_columnconfigure(0, weight=1)
         log_frame.grid_rowconfigure(0, weight=1)
-        self.log_text = scrolledtext.ScrolledText(log_frame, wrap=tk.WORD, state="disabled", font=("Courier New", 9))
+        self.log_text = scrolledtext.ScrolledText(log_frame, wrap=tk.WORD, state="disabled", font=("Courier New", 10)) # Increased font size to 10
         self.log_text.grid(row=0, column=0, sticky="nsew")
         
         return right_container
@@ -198,22 +211,18 @@ class SubtitlePreviewer(TkinterDnD.Tk):
         self.model_combobox.grid(row=1, column=1, sticky="w", padx=(5,5), pady=(5,0))
         self.load_models_button = ttk.Button(api_frame, text="Load/Update", command=self.load_models)
         self.load_models_button.grid(row=1, column=2, sticky="e", pady=(5,0))
-        self.model_combobox.bind("<<ComboboxSelected>>", self.on_model_change)
+        self.model_combobox.bind('<<ComboboxSelected>>', self.on_model_change)
         return api_frame
 
     def _create_save_aio_frame(self, parent):
         save_frame = ttk.LabelFrame(parent, text="Save / AIO", padding=10)
         save_frame.columnconfigure(0, weight=1)
-        
         self.btn_save = ttk.Button(save_frame, text="Save to .SRT file", command=self.save_srt, style="Save.TButton")
         self.btn_save.grid(row=0, column=0, sticky="ew", pady=(0, 5))
-        
         self.btn_softsub_aio = ttk.Button(save_frame, text="Softsub AIO", command=self.start_softsub_aio_thread, style="SoftsubAIO.TButton")
         self.btn_softsub_aio.grid(row=1, column=0, sticky="ew", pady=(2, 2))
-        
         self.btn_hardsub_aio = ttk.Button(save_frame, text="Hardsub AIO", command=self.start_all_in_one_process_thread, style="HardsubAIO.TButton")
         self.btn_hardsub_aio.grid(row=2, column=0, sticky="ew", pady=(2, 0))
-        
         return save_frame
 
     def _create_nav_frame(self, parent):
@@ -221,19 +230,14 @@ class SubtitlePreviewer(TkinterDnD.Tk):
         nav_frame.columnconfigure(0, weight=1)
         nav_frame.columnconfigure(1, weight=1)
         nav_frame.columnconfigure(2, weight=1)
-        
         self.btn_prev = ttk.Button(nav_frame, text="<< Previous", command=self.prev_sub)
         self.btn_prev.grid(row=0, column=0, sticky="ew", pady=2, padx=(0, 5))
-        
         self.nav_label = ttk.Label(nav_frame, text="Sub 0 / 0", anchor="center")
         self.nav_label.grid(row=0, column=1, sticky="ew", pady=5)
-        
         self.btn_next = ttk.Button(nav_frame, text="Next >>", command=self.next_sub)
         self.btn_next.grid(row=0, column=2, sticky="ew", pady=2, padx=(5, 0))
-        
         self.time_label = ttk.Label(nav_frame, text="00:00:00,000 --> 00:00:00,000", anchor="center")
         self.time_label.grid(row=1, column=0, columnspan=3, sticky="ew", pady=5)
-        
         return nav_frame
 
     def _center_window(self, width, height):
@@ -252,14 +256,14 @@ class SubtitlePreviewer(TkinterDnD.Tk):
         missing = check_tools_availability()
         if missing: messagebox.showwarning("Missing Tools", f"The following tools were not found:\n\n{', '.join(missing)}")
 
+    # --- HÀM check_cuda_support ĐÃ SỬA ---
     def check_cuda_support(self):
+        # Hàm này bây giờ chỉ ghi log, không tự ý thay đổi giao diện nữa.
+        # Việc thay đổi giao diện sẽ do toggle_hardsub_settings quyết định.
         if not is_cuda_available():
-            self.hardsub_use_gpu_var.set(False)
-            if hasattr(self, 'gpu_check'): self.gpu_check.config(state=tk.DISABLED)
-            logging.warning("CUDA not available. GPU acceleration disabled.")
+            logging.warning("CUDA not available. GPU acceleration will be disabled for EAST.")
         else:
-            if hasattr(self, 'gpu_check'): self.gpu_check.config(state=tk.NORMAL)
-            logging.info("CUDA is available. GPU acceleration enabled.")
+            logging.info("CUDA is available. GPU acceleration can be enabled for EAST.")
 
     def clear_temp_folder(self):
         if messagebox.askyesno("Confirm", "Are you sure you want to delete all temporary files?\nThis action cannot be undone."):
@@ -282,15 +286,78 @@ class SubtitlePreviewer(TkinterDnD.Tk):
         if messagebox.askyesno("Retry", f"Retry {len(failed_indices)} failed batches?"):
             self.start_ocr_thread(indices_to_process=failed_indices)
 
-    def on_hardsub_settings_change(self, event=None):
+    def on_common_settings_change(self, event=None):
         self.hardsub_scan_area_height_display_var.set(f"{self.hardsub_scan_area_height_var.get()}%")
-        self.hardsub_confidence_display_var.set(f"{self.hardsub_confidence_var.get():.2f}")
 
-    def save_hardsub_settings(self):
-        hardsub_settings = {"scan_top": self.hardsub_scan_top_var.get(), "scan_bottom": self.hardsub_scan_bottom_var.get(), "scan_area_height": self.hardsub_scan_area_height_var.get(), "use_gpu": self.hardsub_use_gpu_var.get(), "confidence": self.hardsub_confidence_var.get(), "quality": self.hardsub_quality_var.get()}
-        self.app_context.update_settings("hardsub_settings", hardsub_settings)
+    def on_east_settings_change(self, event=None):
+        self.east_confidence_display_var.set(f"{self.east_confidence_var.get():.2f}")
 
-    def log_hardsub_settings(self, event=None): self.after(50, self.save_hardsub_settings)
+    def save_common_settings(self):
+        common_settings = {
+            "scan_top": self.hardsub_scan_top_var.get(),
+            "scan_bottom": self.hardsub_scan_bottom_var.get(),
+            "scan_area_height": self.hardsub_scan_area_height_var.get()
+        }
+        self.app_context.update_settings("common_hardsub_settings", common_settings)
+        logging.info(f"Common hardsub settings saved: Scan Top={common_settings['scan_top']}, Scan Bottom={common_settings['scan_bottom']}, Scan Area Height={common_settings['scan_area_height']}%")
+
+    def log_common_settings(self, event=None): self.after(50, self.save_common_settings)
+
+    def save_east_settings(self):
+        east_settings = {
+            "confidence": round(self.east_confidence_var.get(), 2),
+            "quality": self.east_quality_var.get(),
+            "use_gpu": self.east_use_gpu_var.get()
+        }
+        self.app_context.update_settings("east_settings", east_settings)
+        logging.info(f"EAST settings saved: Confidence={east_settings['confidence']:.2f}, Quality={east_settings['quality']}, Use GPU={east_settings['use_gpu']}")
+
+    def log_east_settings(self, event=None): self.after(50, self.save_east_settings)
+
+    def save_vsf_settings(self):
+        vsf_adv_settings = {
+            "moderate_threshold": round(self.vsf_moderate_threshold_var.get(), 2),
+            "moderate_threshold_scaled": round(self.vsf_moderate_threshold_scaled_var.get(), 2),
+            "image_scale": self.vsf_image_scale_var.get()
+        }
+        self.app_context.update_settings("vsf_adv_settings", vsf_adv_settings)
+        logging.info(f"VSF advanced settings saved: Moderate Threshold={vsf_adv_settings['moderate_threshold']:.2f}, Scaled Threshold={vsf_adv_settings['moderate_threshold_scaled']:.2f}, Image Scale={vsf_adv_settings['image_scale']}")
+
+    def log_vsf_settings(self, event=None): self.after(50, self.save_vsf_settings)
+
+    def _set_widget_state(self, frame, state):
+        for widget in frame.winfo_children():
+            try:
+                # Không thay đổi trạng thái của Checkbutton ở đây
+                if not isinstance(widget, ttk.Checkbutton):
+                    widget.configure(state=state)
+            except tk.TclError:
+                pass
+            if isinstance(widget, ttk.Frame) or isinstance(widget, ttk.LabelFrame):
+                self._set_widget_state(widget, state)
+
+    # --- HÀM toggle_hardsub_settings ĐÃ SỬA ---
+    def toggle_hardsub_settings(self):
+        selected_method = self.hardsub_process_var.get()
+        display_method = "EAST + VSF" if selected_method == "east_vsf" else "VSF Only"
+        logging.info(f"Hardsub processing method set to: {display_method}")
+        
+        # Luôn kiểm tra xem widget đã tồn tại chưa
+        if not hasattr(self, 'east_gpu_check'):
+            return
+
+        if selected_method == "vsf_only":
+            self._set_widget_state(self.vsf_adv_settings_frame, tk.NORMAL)
+            self._set_widget_state(self.east_settings_frame, tk.DISABLED)
+            # Tắt checkbox GPU một cách tường minh
+            self.east_gpu_check.config(state=tk.DISABLED)
+        else: # east_vsf
+            self._set_widget_state(self.vsf_adv_settings_frame, tk.DISABLED)
+            self._set_widget_state(self.east_settings_frame, tk.NORMAL)
+            # Chỉ bật checkbox GPU nếu có CUDA
+            self.east_gpu_check.config(state=tk.NORMAL if is_cuda_available() else tk.DISABLED)
+        
+        self.update_idletasks()
 
     def on_scale_change(self, event=None):
         value = self.temp_var.get()
@@ -301,7 +368,7 @@ class SubtitlePreviewer(TkinterDnD.Tk):
     def save_advanced_settings(self, event=None):
         self.app_context.update_settings("batch_size", self.batch_size_var.get())
         self.app_context.update_settings("ocr_language", self.ocr_lang_var.get().strip())
-        self.app_context.update_settings("generation_config", {"temperature": self.temp_var.get()})
+        self.app_context.update_settings("generation_config", {"temperature": round(self.temp_var.get(), 2)})
         logging.info(f"Advanced settings updated: Batch Size={self.batch_size_var.get()}, OCR Lang={self.ocr_lang_var.get()}, Temp={self.temp_var.get():.2f}")
 
     def start_ocr_thread(self, indices_to_process=None):
@@ -310,25 +377,22 @@ class SubtitlePreviewer(TkinterDnD.Tk):
             return
         self._set_controls_state(tk.DISABLED, ocr_running=True)
         self.status_label.config(text="Retrying failed OCR..." if indices_to_process else "Processing OCR...")
-        self.progress_bar.config(mode='determinate', value=0)
         self.cancellation_event.clear()
         threading.Thread(target=self.run_ocr_and_update_gui, args=(indices_to_process,), daemon=True).start()
 
     def cancel_ocr(self):
         self.cancellation_event.set()
         self.status_label.config(text="Operation cancelled.")
-        self.progress_bar['value'] = 0
         self._set_controls_state(tk.NORMAL)
 
     def update_ocr_progress(self, message, percentage):
+        logging.info(f"Progress: {message} ({percentage}%)")
         self.status_label.config(text=message)
-        self.progress_bar['value'] = percentage
         self.update_idletasks()
 
     def run_ocr_and_update_gui(self, indices_to_process=None):
         subtitles, message = self.app_context.run_ocr_pipeline(self.cancellation_event, self.update_ocr_progress, indices_to_process)
         def update_ui():
-            self.progress_bar['value'] = 0
             if subtitles:
                 self.ocr_completed = True
                 self.status_label.config(text=f"OCR Complete! {len(self.app_context.subtitles)} subtitles.")
@@ -357,7 +421,12 @@ class SubtitlePreviewer(TkinterDnD.Tk):
             if w < 50 or h < 50: w, h = 800, 500
             scale = min(w / pil_img.width, h / pil_img.height)
             new_size = (int(pil_img.width * scale), int(pil_img.height * scale))
-            pil_img = pil_img.resize(new_size, Image.Resampling.LANCZOS)
+            try:
+                resample_filter = Image.Resampling.LANCZOS
+            except AttributeError:
+                resample_filter = Image.LANCZOS
+
+            pil_img = pil_img.resize(new_size, resample_filter)
             tk_img = ImageTk.PhotoImage(pil_img)
             self.image_label.config(image=tk_img, text="")
             self.image_label.image = tk_img
@@ -386,28 +455,19 @@ class SubtitlePreviewer(TkinterDnD.Tk):
         if not self.app_context.source_file_path:
             messagebox.showerror("Error", "Source file path not available.")
             return
-
         source_path = self.app_context.source_file_path
         base_name = os.path.splitext(os.path.basename(source_path))[0]
-        
-        # Suggest a save location outside the temp folder
         initial_dir = self.app_context.settings.get("last_save_dir", os.path.expanduser("~"))
         ocr_lang = self.ocr_lang_var.get().strip()
         lang_map = {'Vietnamese': 'vi', 'English': 'en', 'Japanese': 'ja', 'Chinese': 'zh','Korean': 'ko', 'French': 'fr', 'German': 'de', 'Spanish': 'es','Italian': 'it', 'Russian': 'ru', 'Portuguese': 'pt', 'Dutch': 'nl','Polish': 'pl', 'Turkish': 'tr', 'Arabic': 'ar', 'Hindi': 'hi','Thai': 'th', 'Indonesian': 'id', 'Malay': 'ms', 'Filipino': 'fil'}
         lang_code = lang_map.get(ocr_lang)
         file_name = f"{base_name}.{lang_code}.srt" if lang_code else f"{base_name}.srt"
-        
         srt_path = filedialog.asksaveasfilename(initialdir=initial_dir, initialfile=file_name, defaultextension=".srt", filetypes=[("SRT files", "*.srt")])
-        
         if not srt_path: return
-
         try:
-            # Save the SRT file
             with open(srt_path, 'w', encoding='utf-8') as f:
                 for i, sub in enumerate(self.app_context.subtitles):
                     f.write(f"{i + 1}\n{sub['start_srt']} --> {sub['end_srt']}\n{sub.get('text', '').strip()}\n\n")
-            
-            # If the source was from ytdlp, copy the video file as well
             if self.app_context.source_file_is_from_ytdlp:
                 video_source_path = self.app_context.source_file_path
                 video_dest_path = os.path.join(os.path.dirname(srt_path), os.path.basename(video_source_path))
@@ -416,10 +476,7 @@ class SubtitlePreviewer(TkinterDnD.Tk):
                 messagebox.showinfo("Complete", f"SRT file and video saved to:\n{os.path.dirname(srt_path)}")
             else:
                 messagebox.showinfo("Complete", f"SRT file saved to:\n{srt_path}")
-
-            # Save the last used directory
             self.app_context.update_settings("last_save_dir", os.path.dirname(srt_path))
-
         except Exception as e:
             messagebox.showerror("Error", f"Could not save file(s): {e}")
 
@@ -467,7 +524,7 @@ class SubtitlePreviewer(TkinterDnD.Tk):
 
     def select_source_file(self):
         self.app_context.cleanup_current_session_temp()
-        self.app_context.source_file_is_from_ytdlp = False # Reset flag
+        self.app_context.source_file_is_from_ytdlp = False
         self.ocr_completed = False
         source_path = filedialog.askopenfilename(title="Select Source", filetypes=[("All Supported", "*.mkv *.mp4 *.ts *.xml *.html"), ("Video", "*.mkv *.mp4 *.ts"), ("Timing", "*.xml *.html")])
         if not source_path: return
@@ -485,7 +542,7 @@ class SubtitlePreviewer(TkinterDnD.Tk):
     
     def select_hardsub_video(self):
         self.app_context.cleanup_current_session_temp()
-        self.app_context.source_file_is_from_ytdlp = False # Reset flag
+        self.app_context.source_file_is_from_ytdlp = False
         self.ocr_completed = False
         source_path = filedialog.askopenfilename(title="Select Video for Hardsub OCR", filetypes=[("Video Files", "*.mkv *.mp4 *.ts")])
         if not source_path: return
@@ -495,53 +552,70 @@ class SubtitlePreviewer(TkinterDnD.Tk):
         self._set_controls_state(tk.NORMAL)
 
     def start_hardsub_detection_thread(self):
-        if not self.app_context.hardsub_video_path: return
+        if not self.app_context.hardsub_video_path:
+            messagebox.showwarning("Input Missing", "Please select a video file first.")
+            return
         self.cancellation_event.clear()
         self._set_controls_state(tk.DISABLED, extraction_running=True)
-        quality_val = self.hardsub_quality_var.get().replace('px', '')
-        options = {"scan_top": self.hardsub_scan_top_var.get(), "scan_bottom": self.hardsub_scan_bottom_var.get(), "scan_area_height": self.hardsub_scan_area_height_var.get(), "use_gpu": self.hardsub_use_gpu_var.get(), "confidence": self.hardsub_confidence_var.get(), "quality": int(quality_val)}
-        threading.Thread(target=self.handle_hardsub_video, args=(self.app_context.hardsub_video_path, options), daemon=True).start()
-    
-    def handle_hardsub_video(self, video_path, options):
-        subtitles, error, flag_file = self.app_context.process_hardsub_video(video_path, options, self.update_ocr_progress, self.cancellation_event)
-        
+        process_method = self.hardsub_process_var.get()
+        video_path = self.app_context.hardsub_video_path
+        common_options = {"scan_top": self.hardsub_scan_top_var.get(), "scan_bottom": self.hardsub_scan_bottom_var.get(), "scan_area_height": self.hardsub_scan_area_height_var.get()}
+        if process_method == "east_vsf":
+            east_options = {"use_gpu": self.east_use_gpu_var.get(), "confidence": self.east_confidence_var.get(), "quality": int(self.east_quality_var.get().replace('px', ''))}
+            options = {**common_options, **east_options}
+            threading.Thread(target=self.handle_hardsub_video_east, args=(video_path, options), daemon=True).start()
+        else:
+            vsf_adv_options = {"moderate_threshold": self.vsf_moderate_threshold_var.get(), "moderate_threshold_scaled": self.vsf_moderate_threshold_scaled_var.get(), "image_scale": self.vsf_image_scale_var.get()}
+            options = {**common_options, **vsf_adv_options}
+            threading.Thread(target=self.handle_hardsub_video_vsf_only, args=(video_path, options), daemon=True).start()
+
+    def handle_hardsub_video_east(self, video_path, options):
+        subtitles, error, flag_file = self.app_context.process_hardsub_video_east(video_path, options, self.update_ocr_progress, self.cancellation_event)
         def update_ui_after_east():
             if error:
                 messagebox.showerror("Hardsub Error", error)
                 self.status_label.config(text="Hardsub analysis failed.")
                 self._set_controls_state(tk.NORMAL)
                 return
-
             if subtitles:
                 self.status_label.config(text=f"Found {len(subtitles)} potential subtitles. Refining with VSF in background...")
                 self.navigate_to(0)
-            
             if flag_file:
-                self.monitor_vsf_process(flag_file)
+                self.monitor_vsf_process(flag_file, "EAST+VSF")
             else:
-                self.progress_bar['value'] = 100
                 self.status_label.config(text=f"Process complete! Found {len(subtitles) or 0} subtitles.")
                 self._set_controls_state(tk.NORMAL)
-
         self.after(0, update_ui_after_east)
 
-    def monitor_vsf_process(self, flag_file):
+    def handle_hardsub_video_vsf_only(self, video_path, options):
+        _, error, flag_file = self.app_context.process_hardsub_video_vsf_only(video_path, options, self.update_ocr_progress, self.cancellation_event)
+        def update_ui_after_vsf_start():
+            if error:
+                messagebox.showerror("VSF Error", error)
+                self.status_label.config(text="VSF process failed to start.")
+                self._set_controls_state(tk.NORMAL)
+                return
+            if flag_file:
+                self.monitor_vsf_process(flag_file, "VSF-Only")
+            else:
+                self.status_label.config(text="VSF process finished unexpectedly.")
+                self._set_controls_state(tk.NORMAL)
+        self.after(0, update_ui_after_vsf_start)
+
+    def monitor_vsf_process(self, flag_file, method_name):
         if os.path.exists(flag_file):
-            self.status_label.config(text="VSF is running in the background... This may take a while.")
-            self.after(2000, self.monitor_vsf_process, flag_file) # Check every 2 seconds
+            self.status_label.config(text=f"{method_name} is running... This may take a while.")
+            self.after(2000, self.monitor_vsf_process, flag_file, method_name)
         else:
-            self.status_label.config(text="VSF refinement complete. Merging results...")
-            logging.info("VSF process finished. Merging results.")
+            self.status_label.config(text=f"{method_name} refinement complete. Merging results...")
+            logging.info(f"{method_name} process finished. Merging results.")
             self.update_idletasks()
-            
             refined_subtitles = self.app_context.merge_vsf_results()
             if refined_subtitles:
                 self.status_label.config(text=f"Merge complete! Found {len(refined_subtitles)} refined subtitles.")
                 self.navigate_to(0)
             else:
-                self.status_label.config(text="VSF ran, but no new subtitles were found.")
-            
-            self.progress_bar['value'] = 100
+                self.status_label.config(text=f"{method_name} ran, but no subtitles were found.")
             self._set_controls_state(tk.NORMAL)
 
     def handle_video_file(self, video_path):
@@ -555,9 +629,7 @@ class SubtitlePreviewer(TkinterDnD.Tk):
         if dialog.selected_stream_index is not None:
             stream_index = streams[dialog.selected_stream_index]['index']
             self.status_label.config(text="Extracting subtitles...")
-            self.progress_bar.config(mode='determinate', value=0)
             _, _, error = self.app_context.extract_subtitles_from_video(video_path, stream_index, self.update_extraction_progress, self.cancellation_event)
-            self.progress_bar['value'] = 0
             if error:
                 if "cancelled" not in error: messagebox.showerror("Error", error)
             else:
@@ -575,12 +647,12 @@ class SubtitlePreviewer(TkinterDnD.Tk):
         self._set_controls_state(tk.NORMAL)
         
     def update_extraction_progress(self, percentage):
-        self.progress_bar['value'] = percentage
+        # self.progress_bar['value'] = percentage
+        pass
         
     def _set_controls_state(self, state, ocr_running=False, extraction_running=False):
         is_disabled = state == tk.DISABLED or ocr_running or extraction_running
         effective_state = tk.DISABLED if is_disabled else tk.NORMAL
-        
         for widget_name in ['btn_select_source', 'btn_load_session', 'btn_select_hardsub_video', 'load_models_button', 'btn_detect_hardsub', 'btn_hardsub_aio', 'btn_softsub_aio']:
             if hasattr(self, widget_name):
                 widget = getattr(self, widget_name)
@@ -588,7 +660,6 @@ class SubtitlePreviewer(TkinterDnD.Tk):
                     widget.config(state=tk.NORMAL if self.app_context.hardsub_video_path and not is_disabled else tk.DISABLED)
                 else:
                     widget.config(state=effective_state)
-
         self.btn_cancel_ocr.config(state=tk.NORMAL if ocr_running or extraction_running else tk.DISABLED)
         subtitles_loaded = bool(self.app_context.subtitles) and not is_disabled
         self.btn_start_ocr.config(state=tk.NORMAL if subtitles_loaded else tk.DISABLED)
@@ -597,11 +668,8 @@ class SubtitlePreviewer(TkinterDnD.Tk):
         self.btn_prev.config(state=tk.NORMAL if subtitles_loaded else tk.DISABLED)
         self.btn_next.config(state=tk.NORMAL if subtitles_loaded else tk.DISABLED)
         self.btn_save.config(state=tk.NORMAL if self.ocr_completed and not is_disabled else tk.DISABLED)
-        
         hardsub_video_loaded = bool(self.app_context.hardsub_video_path) and not is_disabled
         self.btn_hardsub_aio.config(state=tk.NORMAL if hardsub_video_loaded else tk.DISABLED)
-        
-        # Placeholder for softsub AIO logic
         softsub_ready = bool(self.app_context.source_file_path) and not self.app_context.hardsub_video_path and not is_disabled
         self.btn_softsub_aio.config(state=tk.NORMAL if softsub_ready else tk.DISABLED)
 
@@ -610,17 +678,15 @@ class SubtitlePreviewer(TkinterDnD.Tk):
         if not os.path.exists(filepath):
             logging.error(f"Dropped file path does not exist: {filepath}")
             return
-        
         selected_tab_index = self.notebook.index(self.notebook.select())
-
-        if selected_tab_index == 0: # Softsub tab
+        if selected_tab_index == 0:
             self.handle_softsub_file_drop(filepath)
-        elif selected_tab_index == 1: # Hardsub tab
+        elif selected_tab_index == 1:
             self.handle_hardsub_file_drop(filepath)
 
     def handle_softsub_file_drop(self, source_path):
         self.app_context.cleanup_current_session_temp()
-        self.app_context.source_file_is_from_ytdlp = False # Reset flag
+        self.app_context.source_file_is_from_ytdlp = False
         self.ocr_completed = False
         self.app_context.source_file_path = source_path
         self.cancellation_event.clear()
@@ -636,7 +702,7 @@ class SubtitlePreviewer(TkinterDnD.Tk):
 
     def handle_hardsub_file_drop(self, source_path):
         self.app_context.cleanup_current_session_temp()
-        self.app_context.source_file_is_from_ytdlp = False # Reset flag
+        self.app_context.source_file_is_from_ytdlp = False
         self.ocr_completed = False
         ext = os.path.splitext(source_path)[1].lower()
         if ext not in ['.mkv', '.mp4', '.ts']:
@@ -652,17 +718,14 @@ class SubtitlePreviewer(TkinterDnD.Tk):
         if not video_url:
             messagebox.showwarning("Warning", "Please enter a video URL.")
             return
-        
         self.app_context.cleanup_current_session_temp()
         self.ocr_completed = False
         self.cancellation_event.clear()
         self._set_controls_state(tk.DISABLED, extraction_running=True)
-        
         threading.Thread(target=self.handle_video_download, args=(video_url,), daemon=True).start()
 
     def handle_video_download(self, video_url):
         downloaded_path, error = self.app_context.download_video_from_url(video_url, self.update_ocr_progress)
-        
         def update_ui():
             if error:
                 messagebox.showerror("Download Error", error)
@@ -673,9 +736,7 @@ class SubtitlePreviewer(TkinterDnD.Tk):
                 self.app_context.source_file_path = downloaded_path
                 self.btn_detect_hardsub.config(state=tk.NORMAL)
                 logging.info(f"Video downloaded and selected: {downloaded_path}")
-            
             self._set_controls_state(tk.NORMAL)
-
         self.after(0, update_ui)
 
     def save_srt_auto(self):
@@ -683,26 +744,20 @@ class SubtitlePreviewer(TkinterDnD.Tk):
         if not self.app_context.subtitles:
             logging.error("Auto-save failed: No subtitles available.")
             return None
-
         source_path = self.app_context.source_file_path
         if not source_path:
             logging.error("Auto-save failed: Source file path not available.")
             return None
-
         base_name = os.path.splitext(os.path.basename(source_path))[0]
-        
         ocr_lang = self.ocr_lang_var.get().strip()
         lang_map = {'Vietnamese': 'vi', 'English': 'en', 'Japanese': 'ja', 'Chinese': 'zh','Korean': 'ko', 'French': 'fr', 'German': 'de', 'Spanish': 'es','Italian': 'it', 'Russian': 'ru', 'Portuguese': 'pt', 'Dutch': 'nl','Polish': 'pl', 'Turkish': 'tr', 'Arabic': 'ar', 'Hindi': 'hi','Thai': 'th', 'Indonesian': 'id', 'Malay': 'ms', 'Filipino': 'fil'}
         lang_code = lang_map.get(ocr_lang)
         file_name = f"{base_name}.{lang_code}.srt" if lang_code else f"{base_name}.srt"
-        
         if self.app_context.source_file_is_from_ytdlp:
             save_dir = self.app_context.current_session_dir
         else:
             save_dir = os.path.dirname(source_path)
-
         srt_path = os.path.join(save_dir, file_name)
-
         try:
             with open(srt_path, 'w', encoding='utf-8') as f:
                 for i, sub in enumerate(self.app_context.subtitles):
@@ -720,77 +775,72 @@ class SubtitlePreviewer(TkinterDnD.Tk):
         if not all([self.app_context.api_key, self.app_context.model_name]):
             messagebox.showwarning("Missing Info", "API Key and Model are required.")
             return
-
         self.cancellation_event.clear()
         self._set_controls_state(tk.DISABLED, extraction_running=True)
         threading.Thread(target=self.run_all_in_one_process, daemon=True).start()
 
     def run_all_in_one_process(self):
         try:
-            # 1. Hardsub detection
-            self.after(0, lambda: self.status_label.config(text="[1/4] Starting hardsub detection..."))
             video_path = self.app_context.hardsub_video_path
-            quality_val = self.hardsub_quality_var.get().replace('px', '')
-            options = {
-                "scan_top": self.hardsub_scan_top_var.get(), 
-                "scan_bottom": self.hardsub_scan_bottom_var.get(), 
-                "scan_area_height": self.hardsub_scan_area_height_var.get(), 
-                "use_gpu": self.hardsub_use_gpu_var.get(), 
-                "confidence": self.hardsub_confidence_var.get(), 
-                "quality": int(quality_val)
-            }
-            
-            subtitles, error, flag_file = self.app_context.process_hardsub_video(video_path, options, self.update_ocr_progress, self.cancellation_event)
-
+            process_method = self.hardsub_process_var.get()
+            self.after(0, lambda: self.status_label.config(text=f"[1/4] Starting subtitle detection ({process_method})..."))
+            common_options = {"scan_top": self.hardsub_scan_top_var.get(), "scan_bottom": self.hardsub_scan_bottom_var.get(), "scan_area_height": self.hardsub_scan_area_height_var.get()}
+            subtitles, error, flag_file = None, None, None
+            if process_method == "east_vsf":
+                east_options = {"use_gpu": self.east_use_gpu_var.get(), "confidence": self.east_confidence_var.get(), "quality": int(self.east_quality_var.get().replace('px', ''))}
+                options = {**common_options, **east_options}
+                subtitles, error, flag_file = self.app_context.process_hardsub_video_east(video_path, options, self.update_ocr_progress, self.cancellation_event)
+            else:
+                vsf_adv_options = {"moderate_threshold": self.vsf_moderate_threshold_var.get(), "moderate_threshold_scaled": self.vsf_moderate_threshold_scaled_var.get(), "image_scale": self.vsf_image_scale_var.get()}
+                options = {**common_options, **vsf_adv_options}
+                _, error, flag_file = self.app_context.process_hardsub_video_vsf_only(video_path, options, self.update_ocr_progress, self.cancellation_event)
             if self.cancellation_event.is_set(): return
             if error:
-                self.after(0, lambda: messagebox.showerror("All-in-One Error", f"Hardsub detection failed: {error}"))
+                self.after(0, lambda: messagebox.showerror("All-in-One Error", f"Subtitle detection failed: {error}"))
                 return
-
             if subtitles:
                 self.after(0, lambda: self.navigate_to(0))
-
-            # 2. Wait for VSF if needed
             if flag_file:
                 self.after(0, lambda: self.status_label.config(text="[2/4] VSF is running... This may take a while."))
                 while os.path.exists(flag_file):
                     if self.cancellation_event.is_set(): return
                     time.sleep(2)
                 
-                self.after(0, lambda: self.status_label.config(text="VSF complete. Merging results..."))
-                refined_subtitles = self.app_context.merge_vsf_results()
-                if refined_subtitles:
-                    self.after(0, lambda: self.navigate_to(0))
+                def stop_vsf_progress():
+                    self.status_label.config(text="VSF complete. Merging results...")
+                    pass
+                self.after(0, stop_vsf_progress)
 
+                self.app_context.merge_vsf_results()
+                self.after(0, lambda: self.navigate_to(0))
             if not self.app_context.subtitles:
                 self.after(0, lambda: messagebox.showwarning("All-in-One Info", "No subtitles found after detection phase."))
                 return
-
-            # 3. Run OCR
             self.after(0, lambda: self.status_label.config(text="[3/4] Starting OCR process..."))
             ocr_subtitles, ocr_message = self.app_context.run_ocr_pipeline(self.cancellation_event, self.update_ocr_progress)
-
             if self.cancellation_event.is_set(): return
             if not ocr_subtitles:
                 self.after(0, lambda: messagebox.showerror("All-in-One Error", f"OCR process failed: {ocr_message}"))
                 return
-            
             self.ocr_completed = True
             self.after(0, lambda: self.status_label.config(text="OCR Complete!"))
             self.after(0, lambda: self.navigate_to(0))
-
-            # 4. Save SRT
             self.after(0, lambda: self.status_label.config(text="[4/4] Saving SRT file..."))
             saved_path = self.save_srt_auto()
+            
+            def final_aio_update():
+                if saved_path:
+                    messagebox.showinfo("All-in-One Complete", f"Process finished successfully.\nSRT file saved to:\n{saved_path}")
+                else:
+                    messagebox.showerror("All-in-One Error", "Failed to save the SRT file.")
+                
+                self.status_label.config(text="Ready.")
 
-            if saved_path:
-                self.after(0, lambda: messagebox.showinfo("All-in-One Complete", f"Process finished successfully.\nSRT file saved to:\n{saved_path}"))
-            else:
-                self.after(0, lambda: messagebox.showerror("All-in-One Error", "Failed to save the SRT file."))
+            self.after(0, final_aio_update)
 
         except Exception as e:
-            logging.error(f"An error occurred during the all-in-one process: {e}")
-            self.after(0, lambda: messagebox.showerror("All-in-One Error", f"An unexpected error occurred: {e}"))
+            logging.error(f"An error occurred during the all-in-one process: {e}", exc_info=True)
+            self.after(0, lambda e=e: messagebox.showerror("All-in-One Error", f"An unexpected error occurred: {e}"))
         finally:
             if self.cancellation_event.is_set():
                 self.after(0, lambda: self.status_label.config(text="Operation cancelled."))
@@ -803,7 +853,6 @@ class SubtitlePreviewer(TkinterDnD.Tk):
         if not all([self.app_context.api_key, self.app_context.model_name]):
             messagebox.showwarning("Missing Info", "API Key and Model are required.")
             return
-
         self.cancellation_event.clear()
         self._set_controls_state(tk.DISABLED, extraction_running=True)
         threading.Thread(target=self.run_softsub_aio_process, daemon=True).start()
@@ -811,51 +860,36 @@ class SubtitlePreviewer(TkinterDnD.Tk):
     def run_softsub_aio_process(self):
         try:
             video_path = self.app_context.source_file_path
-            
-            # 1. Inspect for subtitle streams
             self.after(0, lambda: self.status_label.config(text="[1/4] Scanning for subtitle streams..."))
             streams, error = self.app_context.inspect_video_subtitles(video_path)
             if self.cancellation_event.is_set(): return
             if error or not streams:
                 self.after(0, lambda: messagebox.showerror("Softsub AIO Error", error or "No image subtitle streams found."))
                 return
-
-            stream_index = streams[0]['index'] # Automatically select the first stream
+            stream_index = streams[0]['index']
             self.after(0, lambda: self.status_label.config(text=f"Found stream: {streams[0]['tags'].get('title', 'Untitled')}. Extracting..."))
-
-            # 2. Extract subtitles
             self.after(0, lambda: self.status_label.config(text="[2/4] Extracting subtitles..."))
             _, _, error = self.app_context.extract_subtitles_from_video(video_path, stream_index, self.update_extraction_progress, self.cancellation_event)
-            
             if self.cancellation_event.is_set(): return
             if error:
                 self.after(0, lambda: messagebox.showerror("Softsub AIO Error", f"Subtitle extraction failed: {error}"))
                 return
-
             self.after(0, lambda: self.navigate_to(0))
-
-            # 3. Run OCR
             self.after(0, lambda: self.status_label.config(text="[3/4] Starting OCR process..."))
             ocr_subtitles, ocr_message = self.app_context.run_ocr_pipeline(self.cancellation_event, self.update_ocr_progress)
-
             if self.cancellation_event.is_set(): return
             if not ocr_subtitles:
                 self.after(0, lambda: messagebox.showerror("Softsub AIO Error", f"OCR process failed: {ocr_message}"))
                 return
-            
             self.ocr_completed = True
             self.after(0, lambda: self.status_label.config(text="OCR Complete!"))
             self.after(0, lambda: self.navigate_to(0))
-
-            # 4. Save SRT
             self.after(0, lambda: self.status_label.config(text="[4/4] Saving SRT file..."))
             saved_path = self.save_srt_auto()
-
             if saved_path:
                 self.after(0, lambda: messagebox.showinfo("Softsub AIO Complete", f"Process finished successfully.\nSRT file saved to:\n{saved_path}"))
             else:
                 self.after(0, lambda: messagebox.showerror("Softsub AIO Error", "Failed to save the SRT file."))
-
         except Exception as e:
             logging.error(f"An error occurred during the softsub AIO process: {e}")
             self.after(0, lambda: messagebox.showerror("Softsub AIO Error", f"An unexpected error occurred: {e}"))

@@ -2,7 +2,6 @@ import os
 import base64
 import json
 import google.generativeai as genai
-from tqdm import tqdm
 import time
 import re
 import logging
@@ -13,16 +12,16 @@ from src.settings import save_settings, load_settings
 
 def get_available_models(api_key: str) -> tuple[list, str | None]:
     try:
-        logging.info("Getting available Gemini models...")
+        logging.info("Fetching available Gemini models...")
         genai.configure(api_key=api_key)
         models = [m.name.replace("models/", "") for m in genai.list_models() if 'generateContent' in m.supported_generation_methods and "models/gemini" in m.name]
         if not models:
-            logging.warning("No Gemini models found.")
+            logging.warning("No compatible Gemini models found.")
             return [], "No Gemini models found. Please check API key and permissions."
         logging.info(f"Found {len(models)} compatible models.")
         return sorted(models), None
     except Exception as e:
-        logging.error(f"Error getting model list: {e}")
+        logging.error(f"Error fetching model list: {e}")
         return [], f"Invalid API Key or connection error: {e}"
 
 def process_batch_with_gemini(batch_of_events, image_folder, log_folder, model, batch_start_index, generation_config, safety_settings, ocr_prompt):
@@ -34,9 +33,9 @@ def process_batch_with_gemini(batch_of_events, image_folder, log_folder, model, 
                 encoded_string = base64.b64encode(image_file.read()).decode('utf-8')
                 api_request_parts.append({"mime_type": "image/png", "data": encoded_string})
         except FileNotFoundError:
-            logging.warning(f"File {image_path} not found. Skipping.")
+            logging.warning(f"Image file not found: '{event['image_file']}'. Skipping.")
             continue
-    if len(api_request_parts) <= 1: return None, "No images to process."
+    if len(api_request_parts) <= 1: return None, "No images to process in batch."
 
     try:
         response = model.generate_content(
@@ -55,7 +54,7 @@ def process_batch_with_gemini(batch_of_events, image_folder, log_folder, model, 
             with open(log_filepath, 'w', encoding='utf-8') as f:
                 json.dump(parsed_json, f, indent=4, ensure_ascii=False)
         except Exception as log_e:
-            logging.error(f"Error parsing or saving log {log_filename}: {log_e}")
+            logging.error(f"Error parsing or saving log '{log_filename}': {log_e}. Raw response saved to .txt.")
             with open(log_filepath.replace('.json', '.txt'), 'w', encoding='utf-8') as f:
                 f.write(response.text)
 
@@ -75,7 +74,7 @@ def run_ocr_pipeline(subtitles: list, image_folder: str, log_folder: str, api_ke
     except Exception as e:
         return None, f"API or model configuration error: {e}"
 
-    if not subtitles: return None, "Error reading timing file. File might be corrupt or empty."
+    if not subtitles: return None, "No subtitles to process."
 
     process_mask = [True] * len(subtitles) if indices_to_process is None else [i in indices_to_process for i in range(len(subtitles))]
     all_failed_indices = set(load_settings().get('last_failed_batches', []))
@@ -99,6 +98,9 @@ def run_ocr_pipeline(subtitles: list, image_folder: str, log_folder: str, api_ke
                 all_failed_indices.discard(i)
                 break
             else:
+                # Log a concise warning for the user, full details to debug
+                logging.warning(f"Batch {i} failed (attempt {attempt+1}/{max_retries}). Retrying...")
+                logging.debug(f"Full error for batch {i}: {error_message}")
                 time.sleep(2 ** attempt)
         
         if results is not None:
@@ -127,4 +129,14 @@ def run_ocr_pipeline(subtitles: list, image_folder: str, log_folder: str, api_ke
     settings['last_failed_batches'] = sorted(list(all_failed_indices))
     save_settings(settings)
     
-    return subtitles, "OCR process completed."
+    if not all_failed_indices:
+        initial_count = len(subtitles)
+        filtered_subtitles = [sub for sub in subtitles if sub.get('text', '').strip()]
+        removed_count = initial_count - len(filtered_subtitles)
+        if removed_count > 0:
+            logging.info(f"Removed {removed_count} empty subtitle entries.")
+        
+        return filtered_subtitles, "OCR process completed."
+    else:
+        logging.warning(f"OCR process completed with {len(all_failed_indices)} failed batches. Please check the logs for details. Empty lines were not removed.")
+        return subtitles, "OCR process completed with some failed batches."

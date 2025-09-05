@@ -10,12 +10,13 @@ from datetime import datetime
 import threading
 import re
 import yt_dlp
+import time
 
 from src.settings import load_settings, save_settings, TEMP_DIR_NAME, APP_TEMP_PATH
 from src.video_processor import inspect_video_subtitles, extract_pgs_subtitles
 from src.ocr import run_ocr_pipeline, get_available_models
 from src.utils import parse_bdsup2sub_xml, parse_subtitle_edit_html
-from src.hardsub_processor import run_hardsub_pipeline, vsf_time_to_seconds, seconds_to_srt_time
+from src.hardsub_processor import run_hardsub_pipeline, run_vsf_only_pipeline, vsf_time_to_seconds, seconds_to_srt_time
 
 
 def resource_path(relative_path: str) -> str:
@@ -65,12 +66,12 @@ class AppContext:
         os.makedirs(os.path.join(session_path, "images"), exist_ok=True)
         os.makedirs(os.path.join(session_path, "logs"), exist_ok=True)
         self.current_session_dir = session_path
-        logging.info(f"New session directory created: {session_path}")
+        logging.info(f"New session started: {session_name}")
         return session_path
 
     def cleanup_current_session_temp(self):
         if self.current_session_dir and os.path.exists(self.current_session_dir):
-            logging.info(f"Session directory cleaned up: {self.current_session_dir}")
+            logging.info(f"Cleaning up session: {os.path.basename(self.current_session_dir)}")
         self.current_session_dir = None
         self.image_folder = ""
         self.timing_file_path = ""
@@ -81,17 +82,17 @@ class AppContext:
         self.source_file_is_from_ytdlp = False
 
     def cleanup_vsf_events(self):
-        logging.info("Cleaning up leftover VSF event directories...")
+        logging.info("Cleaning up temporary VSF folders...")
         cleaned_count = 0
         for item_name in os.listdir(APP_TEMP_PATH):
-            if item_name.startswith('vsf_event_') and os.path.isdir(os.path.join(APP_TEMP_PATH, item_name)):
+            if item_name.startswith(('vsf_event_', 'vsf_run_')) and os.path.isdir(os.path.join(APP_TEMP_PATH, item_name)):
                 try:
                     shutil.rmtree(os.path.join(APP_TEMP_PATH, item_name))
                     cleaned_count += 1
                 except Exception as e:
-                    logging.error(f"Could not clean up VSF event folder {item_name}: {e}")
+                    logging.error(f"Failed to clean up VSF folder '{item_name}': {e}")
         if cleaned_count > 0:
-            logging.info(f"Cleaned up {cleaned_count} VSF event directories.")
+            logging.info(f"Cleaned up {cleaned_count} VSF temporary directories.")
 
     def update_settings(self, key, value):
         self.settings[key] = value
@@ -112,7 +113,8 @@ class AppContext:
         return inspect_video_subtitles(video_path)
 
     def extract_subtitles_from_video(self, video_path: str, stream_index: int, progress_callback=None, cancellation_event=None) -> tuple[str | None, str | None, str | None]:
-        logging.info(f"Extracting subtitles from {os.path.basename(video_path)} (stream {stream_index})...")
+        start_time = time.time()
+        logging.info(f"Extracting subtitles from '{os.path.basename(video_path)}' (stream {stream_index})...")
         base_name = os.path.splitext(os.path.basename(video_path))[0]
         session_dir = self._create_new_session_dir(base_name)
         image_folder, timing_file, error = extract_pgs_subtitles(video_path, stream_index, session_dir, self.bdsup2sub_path, progress_callback, cancellation_event)
@@ -127,12 +129,14 @@ class AppContext:
             subtitles = []
         if subtitles:
             self.subtitles = subtitles
+            logging.info(f"Subtitle extraction complete. Found {len(subtitles)} subtitles in {time.time() - start_time:.2f} seconds.")
         else:
             return image_folder, timing_file, "Error reading timing file after extraction."
         return image_folder, timing_file, None
 
     def load_timing_file(self, timing_path: str) -> tuple[list | None, str | None]:
-        logging.info(f"Loading timing file: {os.path.basename(timing_path)}")
+        start_time = time.time()
+        logging.info(f"Loading timing file: '{os.path.basename(timing_path)}'...")
         base_name = os.path.splitext(os.path.basename(timing_path))[0]
         session_dir = self._create_new_session_dir(base_name)
         session_timing_path = os.path.join(session_dir, os.path.basename(timing_path))
@@ -141,7 +145,7 @@ class AppContext:
         session_image_folder = os.path.join(session_dir, "images")
         try:
             shutil.copytree(original_image_folder, session_image_folder, dirs_exist_ok=True)
-            logging.info(f"Copied images from {original_image_folder}.")
+            logging.info(f"Copied images from '{original_image_folder}'.")
         except FileNotFoundError:
              pass
         self.image_folder = session_image_folder
@@ -154,12 +158,13 @@ class AppContext:
             return None, "Unsupported file format."
         if subtitles:
             self.subtitles = subtitles
-            logging.info(f"Successfully loaded {len(subtitles)} subtitles from timing file.")
+            logging.info(f"Successfully loaded {len(subtitles)} subtitles from timing file in {time.time() - start_time:.2f} seconds.")
             return subtitles, None
         else:
             return None, "Error reading timing file. File might be corrupt or empty."
-
+        
     def run_ocr_pipeline(self, cancellation_event: threading.Event, progress_callback=None, indices_to_process=None) -> tuple[list | None, str]:
+        start_time = time.time()
         if not all([self.api_key, self.model_name, self.image_folder, self.current_session_dir]):
             return None, "Missing configuration information to run OCR."
         log_folder = os.path.join(self.current_session_dir, "logs")
@@ -177,7 +182,9 @@ class AppContext:
             current_ocr_prompt = self.ocr_prompt_template
         if self.ocr_language and self.ocr_language.lower() != 'auto':
             current_ocr_prompt += f"\nImportant: The primary language of the subtitles is {self.ocr_language}."
+        
         subtitles, message = run_ocr_pipeline(self.subtitles, self.image_folder, log_folder, self.api_key, self.model_name, self.generation_config, self.safety_settings, self.batch_size, self.max_retries, current_ocr_prompt, cancellation_event, progress_callback, indices_to_process)
+        
         if subtitles:
             if is_hardsub_session:
                 logging.info("Post-processing hardsub results...")
@@ -186,16 +193,20 @@ class AppContext:
                         sub['text'] = f"{{\\an8}}{sub.get('text', '')}"
                 subtitles.sort(key=lambda x: x['start_srt'])
                 logging.info("Hardsub results sorted by start time.")
+
             self.subtitles = subtitles
+            logging.info(f"OCR process completed in {time.time() - start_time:.2f} seconds.")
             return subtitles, message
+            
         return None, message
         
-    def process_hardsub_video(self, video_path: str, options: dict, progress_callback=None, cancellation_event=None) -> tuple[list | None, str | None, str | None]:
-        logging.info(f"Starting hardsub analysis for: {os.path.basename(video_path)}")
+    def process_hardsub_video_east(self, video_path: str, options: dict, progress_callback=None, cancellation_event=None) -> tuple[list | None, str | None, str | None]:
+        start_time = time.time()
+        logging.info(f"Starting EAST+VSF hardsub analysis for: '{os.path.basename(video_path)}'")
         
         if self.current_session_dir:
             session_dir = self.current_session_dir
-            logging.info(f"Reusing existing session directory: {session_dir}")
+            logging.info(f"Reusing existing session directory: '{os.path.basename(session_dir)}'")
         else:
             base_name = os.path.splitext(os.path.basename(video_path))[0]
             session_dir = self._create_new_session_dir(f"HARDSUB_{base_name}")
@@ -205,34 +216,62 @@ class AppContext:
         subtitles, error, flag_file = run_hardsub_pipeline(video_path, self.image_folder, options, progress_callback, cancellation_event)
 
         if error:
-            logging.error(f"Hardsub pipeline failed: {error}")
+            logging.error(f"EAST+VSF pipeline failed: {error}")
             return None, error, None
 
         self.subtitles = subtitles
         if subtitles:
-            # Lưu kết quả tạm thời
             self.timing_file_path = os.path.join(session_dir, "hardsub_log_tmp.json")
             with open(self.timing_file_path, 'w', encoding='utf-8') as f:
                 json.dump(subtitles, f, indent=2)
         
+        logging.info(f"EAST+VSF analysis complete in {time.time() - start_time:.2f} seconds.")
+        return self.subtitles, None, flag_file
+
+    def process_hardsub_video_vsf_only(self, video_path: str, options: dict, progress_callback=None, cancellation_event=None) -> tuple[list | None, str | None, str | None]:
+        start_time = time.time()
+        logging.info(f"Starting VSF-Only hardsub analysis for: '{os.path.basename(video_path)}'")
+        
+        base_name = os.path.splitext(os.path.basename(video_path))[0]
+        session_dir = self._create_new_session_dir(f"HARDSUB_{base_name}")
+        
+        self.image_folder = os.path.join(session_dir, "images")
+        
+        subtitles, error, flag_file = run_vsf_only_pipeline(video_path, self.image_folder, options, progress_callback, cancellation_event)
+
+        if error:
+            logging.error(f"VSF-Only pipeline failed: {error}")
+            return None, error, None
+        
+        self.subtitles = []
+        
+        logging.info(f"VSF-Only analysis started in {time.time() - start_time:.2f} seconds.")
         return self.subtitles, None, flag_file
 
     def merge_vsf_results(self) -> list | None:
+        start_time = time.time()
         if not self.current_session_dir:
             return None
+        
         refined_subtitles = []
-        vsf_event_dirs = [d for d in os.listdir(APP_TEMP_PATH) if d.startswith('vsf_event_')]
-        if not vsf_event_dirs:
-            logging.warning("merge_vsf_results was called, but no VSF event directories were found.")
-            return None
-        logging.info("Processing refined results from VSF event folders...")
+        
+        vsf_output_dirs = [d for d in os.listdir(APP_TEMP_PATH) if d.startswith(('vsf_event_', 'vsf_run_'))]
+        
+        if not vsf_output_dirs:
+            logging.warning("No VSF output directories found for merging.")
+            return self.subtitles
+            
+        logging.info(f"Processing refined results from {len(vsf_output_dirs)} VSF output folder(s)...")
         image_counter = 1
-        for event_dir_name in vsf_event_dirs:
-            event_dir_path = os.path.join(APP_TEMP_PATH, event_dir_name)
-            rgb_images_path = os.path.join(event_dir_path, 'RGBImages')
-            channel = 'top' if 'vsf_event_top_' in event_dir_name else 'bottom'
+
+        for dir_name in vsf_output_dirs:
+            dir_path = os.path.join(APP_TEMP_PATH, dir_name)
+            rgb_images_path = os.path.join(dir_path, 'RGBImages')
+            
+            channel = 'top' if ('_top_' in dir_name or 'vsf_event_top_' in dir_name) else 'bottom'
+
             if os.path.isdir(rgb_images_path) and os.listdir(rgb_images_path):
-                logging.info(f"Found {len(os.listdir(rgb_images_path))} images in {event_dir_name}.")
+                logging.info(f"Found {len(os.listdir(rgb_images_path))} images in '{dir_name}'.")
                 for img_filename in sorted(os.listdir(rgb_images_path)):
                     if img_filename.lower().endswith(('.png', '.jpeg', '.jpg')):
                         try:
@@ -242,29 +281,45 @@ class AppContext:
                             end_time_match = re.match(r'(\d+_\d+_\d+_\d+)', time_parts[1])
                             if not end_time_match: continue
                             end_time_str = end_time_match.group(1)
+                            
                             start_sec = vsf_time_to_seconds(start_time_str)
                             end_sec = vsf_time_to_seconds(end_time_str)
+                            
                             new_image_filename = f"hardsub_refined_{image_counter:05d}{original_ext}"
                             shutil.copy(os.path.join(rgb_images_path, img_filename), os.path.join(self.image_folder, new_image_filename))
-                            refined_subtitles.append({"start_srt": seconds_to_srt_time(start_sec), "end_srt": seconds_to_srt_time(end_sec), "image_file": new_image_filename, "channel": channel})
+                            
+                            refined_subtitles.append({
+                                "start_srt": seconds_to_srt_time(start_sec), 
+                                "end_srt": seconds_to_srt_time(end_sec), 
+                                "image_file": new_image_filename, 
+                                "channel": channel
+                            })
                             image_counter += 1
                         except Exception as e:
-                            logging.error(f"CRITICAL: Could not process VSF image file '{img_filename}'. Error: {e}")
+                            logging.error(f"Failed to process VSF image file '{img_filename}': {e}")
             else:
-                logging.warning(f"No 'RGBImages' folder or no images found in {event_dir_name}.")
-        self.cleanup_vsf_events()
+                logging.warning(f"No 'RGBImages' folder or no images found in '{dir_name}'.")
+            
+            try:
+                shutil.rmtree(dir_path)
+            except Exception as e:
+                logging.error(f"Failed to clean up VSF output folder '{dir_name}': {e}")
+
         if refined_subtitles:
             refined_subtitles.sort(key=lambda x: x['start_srt'])
             self.subtitles = refined_subtitles
+            
             self.timing_file_path = os.path.join(self.current_session_dir, "hardsub_log_refined.json")
             with open(self.timing_file_path, 'w', encoding='utf-8') as f:
                 json.dump(self.subtitles, f, indent=2)
-            logging.info(f"Successfully merged {len(self.subtitles)} refined subtitles from VSF.")
+            logging.info(f"Merged {len(self.subtitles)} subtitles in {time.time() - start_time:.2f} seconds.")
             return self.subtitles
-        logging.warning("VSF processing finished, but no valid subtitle images were generated.")
-        return None
+            
+        logging.warning("VSF processing finished, but no new valid subtitle images were generated.")
+        return self.subtitles
 
     def load_session_from_folder(self, session_folder_path: str) -> tuple[list | None, str | None]:
+        start_time = time.time()
         if not os.path.isdir(session_folder_path):
             return None, "Session folder does not exist."
         self.cleanup_current_session_temp()
@@ -305,8 +360,10 @@ class AppContext:
                     except Exception as e:
                         logging.error(f"Error parsing log {filename}: {e}")
         if log_files_found > 0:
+            logging.info(f"Session loaded with {log_files_found} OCR batches in {time.time() - start_time:.2f} seconds.")
             return self.subtitles, f"Loaded {log_files_found} batches from logs."
         else:
+            logging.info(f"Session loaded in {time.time() - start_time:.2f} seconds.")
             return self.subtitles, "Session loaded."
 
     def get_session_list(self) -> list[str]:
@@ -325,14 +382,15 @@ class AppContext:
             return self.settings.get("ocr_prompt", "Extract text from image.")
 
     def download_video_from_url(self, video_url: str, progress_callback=None) -> tuple[str | None, str | None]:
-        logging.info(f"Attempting to download video from URL: {video_url}")
+        start_time = time.time()
+        logging.info(f"Starting video download from URL: '{video_url}'")
 
         try:
             with yt_dlp.YoutubeDL({'quiet': True, 'nocheckcertificate': True, 'extract_flat': 'in_playlist'}) as ydl:
                 info = ydl.extract_info(video_url, download=False)
                 video_title = info.get('title', 'YTDLP_Download')
         except Exception as e:
-            logging.error(f"Could not extract video info: {e}")
+            logging.error(f"Failed to extract video info: {e}")
             video_title = "YTDLP_Download"
 
         session_dir = self._create_new_session_dir(f"HARDSUB_{video_title}")
@@ -361,15 +419,12 @@ class AppContext:
                 info = ydl.extract_info(video_url, download=True)
                 downloaded_file = ydl.prepare_filename(info)
             
-            logging.info(f"Video downloaded successfully to: {downloaded_file}")
+            logging.info(f"Video downloaded successfully to: '{downloaded_file}' in {time.time() - start_time:.2f} seconds.")
             return downloaded_file, None
         except Exception as e:
             logging.error(f"yt-dlp failed to download video: {e}")
             return None, str(e)
 
     def progress_callback_wrapper(self, callback, message, percentage):
-        # Helper to ensure callback is called from the main thread if needed
-        # In this implementation, we assume the GUI's progress update is thread-safe
-        # or handled by `after()` as it is in the current GUI structure.
         if callback:
             callback(message, percentage)
