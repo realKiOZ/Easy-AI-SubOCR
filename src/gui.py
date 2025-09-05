@@ -85,51 +85,100 @@ class SubtitlePreviewer(TkinterDnD.Tk):
         style.configure("Highlighted.TNotebook.Tab", background=selected_bg, font=('Arial', 10, 'bold'), padding=[10, 5])
         style.map("Highlighted.TNotebook.Tab", background=[("selected", selected_bg)])
         style.configure("TNotebook", tabposition='n')
-        style.configure("Save.TButton", font=('Arial', 10, 'bold'), background="#cce0ff")
-        style.configure("HardsubAIO.TButton", font=('Arial', 10, 'bold'), background="#d4edda")
-        style.configure("SoftsubAIO.TButton", font=('Arial', 10, 'bold'), background="#d1ecf1")
+        style.configure("Save.TButton", font=('Arial', 11, 'bold'), padding=[0, 5], background="#cce0ff")
+        style.configure("HardsubAIO.TButton", font=('Arial', 11, 'bold'), padding=[0, 5], background="#d4edda")
+        style.configure("SoftsubAIO.TButton", font=('Arial', 11, 'bold'), padding=[0, 5], background="#d1ecf1")
 
     def _create_widgets(self):
-        self.grid_columnconfigure(1, weight=1)
+        self.grid_columnconfigure(0, weight=1, minsize=380)
+        self.grid_columnconfigure(1, weight=3)
         self.grid_rowconfigure(0, weight=1)
+
         left_frame = self._create_left_panel()
-        left_frame.grid(row=0, column=0, sticky="ns", padx=5, pady=5)
+        left_frame.grid(row=0, column=0, sticky="nsew", padx=5, pady=5)
+
         right_frame = self._create_right_panel()
         right_frame.grid(row=0, column=1, sticky="nsew", padx=5, pady=5)
 
     def _create_left_panel(self):
-        left_container = ttk.Frame(self, width=420)
-        left_container.grid_propagate(False)
-        left_container.grid_rowconfigure(0, weight=1)
+        left_container = ttk.Frame(self)
+        left_container.grid_rowconfigure(1, weight=1)
         left_container.grid_columnconfigure(0, weight=1)
-        canvas = tk.Canvas(left_container, highlightthickness=0)
-        canvas.grid(row=0, column=0, sticky="nsew")
-        scrollbar = ttk.Scrollbar(left_container, orient="vertical", command=canvas.yview)
-        scrollbar.grid(row=0, column=1, sticky="ns")
-        canvas.configure(yscrollcommand=scrollbar.set)
-        content_frame = ttk.Frame(canvas, padding=5)
-        content_frame_id = canvas.create_window((0, 0), window=content_frame, anchor="nw")
-        def update_width(event): canvas.itemconfig(content_frame_id, width=event.width)
-        canvas.bind('<Configure>', update_width)
-        content_frame.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
-        content_frame.grid_columnconfigure(0, weight=1)
-        api_frame = self._create_api_config_frame(content_frame)
-        api_frame.grid(row=0, column=0, sticky="ew", pady=(0, 10))
-        self.notebook = ttk.Notebook(content_frame, style="Highlighted.TNotebook")
-        self.notebook.grid(row=1, column=0, sticky="ew", pady=(0, 10))
+
+        api_frame = self._create_api_config_frame(left_container)
+        api_frame.grid(row=0, column=0, sticky="ew", pady=(0, 5))
+
+        self.notebook = ttk.Notebook(left_container, style="Highlighted.TNotebook")
+        self.notebook.grid(row=1, column=0, sticky="nsew")
+        
         softsub_tab_frame = create_softsub_tab(self.notebook, self)
-        self.notebook.add(softsub_tab_frame, text="Softsub OCR")
+        self.notebook.add(softsub_tab_frame, text="Softsub tab")
+        
         hardsub_tab_frame = create_hardsub_tab(self.notebook, self)
-        self.notebook.add(hardsub_tab_frame, text="Hardsub OCR")
-        separator = ttk.Separator(content_frame, orient='horizontal')
-        separator.grid(row=2, column=0, sticky='ew', pady=15)
-        adv_settings_frame = create_advanced_settings(content_frame, self)
-        adv_settings_frame.grid(row=3, column=0, sticky="ew", pady=(0, 10))
-        ocr_controls_frame = create_ocr_controls(content_frame, self)
-        ocr_controls_frame.grid(row=4, column=0, sticky="ew", pady=(0, 10))
-        nav_frame = self._create_nav_save_frame(content_frame)
-        nav_frame.grid(row=5, column=0, sticky="ew")
+        self.notebook.add(hardsub_tab_frame, text="Hardsub tab")
+        
         return left_container
+
+    def _create_right_panel(self):
+        right_container = ttk.Frame(self)
+        right_container.grid_columnconfigure(0, weight=1)
+        right_container.grid_rowconfigure(1, weight=50) # Preview
+        right_container.grid_rowconfigure(2, weight=2) # Nav/OCR
+        right_container.grid_rowconfigure(3, weight=1) # Log
+
+        # Top controls
+        top_controls_frame = ttk.Frame(right_container)
+        top_controls_frame.grid(row=0, column=0, sticky="ew", pady=(0, 5))
+        top_controls_frame.grid_columnconfigure(0, weight=1)
+        top_controls_frame.grid_columnconfigure(1, minsize=300)
+        
+        adv_ocr_frame = ttk.LabelFrame(top_controls_frame, text="Advanced OCR", padding=10)
+        adv_ocr_frame.grid(row=0, column=0, sticky="nsew", padx=(0, 5))
+        adv_settings_frame = create_advanced_settings(adv_ocr_frame, self)
+        adv_settings_frame.pack(fill="x", expand=True)
+        ocr_controls_frame = create_ocr_controls(adv_ocr_frame, self)
+        ocr_controls_frame.pack(fill="x", expand=True, pady=(5,0))
+
+        save_aio_frame = self._create_save_aio_frame(top_controls_frame)
+        save_aio_frame.grid(row=0, column=1, sticky="nsew", padx=(5, 0))
+
+        # Image Preview
+        image_container = ttk.LabelFrame(right_container, text="Frame Preview", padding=10)
+        image_container.grid(row=1, column=0, sticky="nsew", pady=(0, 5))
+        image_container.grid_propagate(False)
+        image_container.grid_rowconfigure(0, weight=1)
+        image_container.grid_columnconfigure(0, weight=1)
+        self.image_label = ttk.Label(image_container, text="", anchor="center", background="gray")
+        self.image_label.grid(row=0, column=0, sticky="nsew")
+
+        # Navigation & OCR Result
+        nav_ocr_frame = ttk.Frame(right_container)
+        nav_ocr_frame.grid(row=2, column=0, sticky="nsew", pady=5)
+        nav_ocr_frame.grid_columnconfigure(1, weight=1)
+
+        nav_frame = self._create_nav_frame(nav_ocr_frame)
+        nav_frame.grid(row=0, column=0, sticky="ew", padx=(0, 5))
+
+        ocr_result_frame = ttk.LabelFrame(nav_ocr_frame, text="OCR Result", padding=10)
+        ocr_result_frame.grid(row=0, column=1, sticky="nsew")
+        ocr_result_frame.grid_rowconfigure(0, weight=1)
+        ocr_result_frame.grid_columnconfigure(0, weight=1)
+        try:
+            self.text_font = font.Font(family="Noto Sans", size=14)
+        except tk.TclError:
+            self.text_font = font.Font(family="Arial", size=14)
+        self.text_editor = scrolledtext.ScrolledText(ocr_result_frame, wrap=tk.WORD, font=self.text_font, height=4)
+        self.text_editor.grid(row=0, column=0, sticky="nsew")
+
+        # Log
+        log_frame = ttk.LabelFrame(right_container, text="Log", padding=5)
+        log_frame.grid(row=3, column=0, sticky="nsew", pady=(5, 0))
+        log_frame.grid_columnconfigure(0, weight=1)
+        log_frame.grid_rowconfigure(0, weight=1)
+        self.log_text = scrolledtext.ScrolledText(log_frame, wrap=tk.WORD, state="disabled", font=("Courier New", 9))
+        self.log_text.grid(row=0, column=0, sticky="nsew")
+        
+        return right_container
 
     def _create_menu(self):
         menubar = tk.Menu(self)
@@ -139,7 +188,7 @@ class SubtitlePreviewer(TkinterDnD.Tk):
         tools_menu.add_command(label="Clear Temp Folder...", command=self.clear_temp_folder)
 
     def _create_api_config_frame(self, parent):
-        api_frame = ttk.LabelFrame(parent, text="API Configuration", padding=10)
+        api_frame = ttk.LabelFrame(parent, text="API Key / Models", padding=10)
         api_frame.columnconfigure(1, weight=1)
         ttk.Label(api_frame, text="Google API Key:").grid(row=0, column=0, sticky="w", pady=2)
         self.api_key_entry = ttk.Entry(api_frame, textvariable=self.api_key_var, show="*")
@@ -152,61 +201,40 @@ class SubtitlePreviewer(TkinterDnD.Tk):
         self.model_combobox.bind("<<ComboboxSelected>>", self.on_model_change)
         return api_frame
 
-    def _create_nav_save_frame(self, parent):
-        nav_frame = ttk.LabelFrame(parent, text="Navigation & Save", padding=10)
+    def _create_save_aio_frame(self, parent):
+        save_frame = ttk.LabelFrame(parent, text="Save / AIO", padding=10)
+        save_frame.columnconfigure(0, weight=1)
+        
+        self.btn_save = ttk.Button(save_frame, text="Save to .SRT file", command=self.save_srt, style="Save.TButton")
+        self.btn_save.grid(row=0, column=0, sticky="ew", pady=(0, 5))
+        
+        self.btn_softsub_aio = ttk.Button(save_frame, text="Softsub AIO", command=self.start_softsub_aio_thread, style="SoftsubAIO.TButton")
+        self.btn_softsub_aio.grid(row=1, column=0, sticky="ew", pady=(2, 2))
+        
+        self.btn_hardsub_aio = ttk.Button(save_frame, text="Hardsub AIO", command=self.start_all_in_one_process_thread, style="HardsubAIO.TButton")
+        self.btn_hardsub_aio.grid(row=2, column=0, sticky="ew", pady=(2, 0))
+        
+        return save_frame
+
+    def _create_nav_frame(self, parent):
+        nav_frame = ttk.LabelFrame(parent, text="Navigation", padding=10)
         nav_frame.columnconfigure(0, weight=1)
         nav_frame.columnconfigure(1, weight=1)
         nav_frame.columnconfigure(2, weight=1)
+        
         self.btn_prev = ttk.Button(nav_frame, text="<< Previous", command=self.prev_sub)
         self.btn_prev.grid(row=0, column=0, sticky="ew", pady=2, padx=(0, 5))
+        
         self.nav_label = ttk.Label(nav_frame, text="Sub 0 / 0", anchor="center")
         self.nav_label.grid(row=0, column=1, sticky="ew", pady=5)
+        
         self.btn_next = ttk.Button(nav_frame, text="Next >>", command=self.next_sub)
         self.btn_next.grid(row=0, column=2, sticky="ew", pady=2, padx=(5, 0))
+        
         self.time_label = ttk.Label(nav_frame, text="00:00:00,000 --> 00:00:00,000", anchor="center")
         self.time_label.grid(row=1, column=0, columnspan=3, sticky="ew", pady=5)
-        self.btn_save = ttk.Button(nav_frame, text="Save to .SRT file", command=self.save_srt, style="Save.TButton")
-        self.btn_save.grid(row=2, column=0, columnspan=3, sticky="ew", pady=(5, 2))
         
-        aio_frame = ttk.Frame(nav_frame)
-        aio_frame.grid(row=3, column=0, columnspan=3, sticky="ew", pady=(5, 2))
-        aio_frame.columnconfigure(0, weight=1)
-        aio_frame.columnconfigure(1, weight=1)
-
-        self.btn_softsub_aio = ttk.Button(aio_frame, text="Softsub AIO", command=self.start_softsub_aio_thread, style="SoftsubAIO.TButton")
-        self.btn_softsub_aio.grid(row=0, column=0, sticky="ew", padx=(0, 2))
-        
-        self.btn_hardsub_aio = ttk.Button(aio_frame, text="Hardsub AIO", command=self.start_all_in_one_process_thread, style="HardsubAIO.TButton")
-        self.btn_hardsub_aio.grid(row=0, column=1, sticky="ew", padx=(2, 0))
-
         return nav_frame
-
-    def _create_right_panel(self):
-        right_frame = ttk.Frame(self)
-        right_frame.grid_rowconfigure(0, weight=4)
-        right_frame.grid_rowconfigure(1, weight=1)
-        right_frame.grid_rowconfigure(2, weight=1)
-        right_frame.grid_columnconfigure(0, weight=1)
-        try:
-            self.text_font = font.Font(family="Noto Sans", size=20, weight="bold")
-        except tk.TclError:
-            self.text_font = font.Font(family="Arial", size=20, weight="bold")
-        image_container = ttk.Frame(right_frame)
-        image_container.grid(row=0, column=0, sticky="nsew", pady=(0, 5))
-        image_container.grid_propagate(False)
-        image_container.grid_rowconfigure(0, weight=1)
-        image_container.grid_columnconfigure(0, weight=1)
-        self.image_label = ttk.Label(image_container, text="Subtitle Image Will Appear Here", anchor="center", background="gray")
-        self.image_label.grid(row=0, column=0, sticky="nsew")
-        self.text_editor = scrolledtext.ScrolledText(right_frame, wrap=tk.WORD, font=self.text_font, height=4)
-        self.text_editor.grid(row=1, column=0, sticky="nsew", pady=(5, 0))
-        log_frame = ttk.LabelFrame(right_frame, text="Log", padding=5)
-        log_frame.grid(row=2, column=0, sticky="nsew", pady=(10, 0))
-        log_frame.grid_columnconfigure(0, weight=1)
-        log_frame.grid_rowconfigure(0, weight=1)
-        self.log_text = scrolledtext.ScrolledText(log_frame, wrap=tk.WORD, state="disabled", font=("Courier New", 9))
-        self.log_text.grid(row=0, column=0, sticky="nsew")
-        return right_frame
 
     def _center_window(self, width, height):
         screen_width = self.winfo_screenwidth()
@@ -463,8 +491,8 @@ class SubtitlePreviewer(TkinterDnD.Tk):
         if not source_path: return
         self.app_context.hardsub_video_path = source_path
         self.app_context.source_file_path = source_path
-        self.btn_detect_hardsub.config(state=tk.NORMAL)
         logging.info(f"Selected hardsub video: {source_path}")
+        self._set_controls_state(tk.NORMAL)
 
     def start_hardsub_detection_thread(self):
         if not self.app_context.hardsub_video_path: return
@@ -616,8 +644,8 @@ class SubtitlePreviewer(TkinterDnD.Tk):
             return
         self.app_context.hardsub_video_path = source_path
         self.app_context.source_file_path = source_path
-        self.btn_detect_hardsub.config(state=tk.NORMAL)
         logging.info(f"Selected hardsub video via drop: {source_path}")
+        self._set_controls_state(tk.NORMAL)
 
     def start_video_download_thread(self):
         video_url = self.video_url_var.get()

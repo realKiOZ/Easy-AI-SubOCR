@@ -6,7 +6,7 @@ def create_softsub_tab(parent, gui_instance):
     softsub_frame = ttk.Frame(parent, padding=10)
     
     control_frame = ttk.LabelFrame(softsub_frame, text="Softsub Process", padding=10)
-    control_frame.pack(fill=tk.X, expand=True, pady=(0, 10))
+    control_frame.pack(fill=tk.X, expand=False, anchor="n", pady=(0, 10))
 
     btn_select_source = ttk.Button(
         control_frame, 
