@@ -13,7 +13,7 @@ import yt_dlp
 import time
 
 from src.settings import load_settings, save_settings, TEMP_DIR_NAME, APP_TEMP_PATH
-from src.video_processor import inspect_video_subtitles, extract_pgs_subtitles
+from src.video_processor import inspect_video_subtitles, extract_pgs_subtitles, convert_sup_to_xml_and_images
 from src.ocr import run_ocr_pipeline, get_available_models
 from src.utils import parse_bdsup2sub_xml, parse_subtitle_edit_html
 from src.hardsub_processor import run_hardsub_pipeline, run_vsf_only_pipeline, vsf_time_to_seconds, seconds_to_srt_time
@@ -29,10 +29,11 @@ def resource_path(relative_path: str) -> str:
 class AppContext:
     def __init__(self):
         self.settings = load_settings()
-        self.api_key = self.settings.get("api_key", "")
+        self.api_key_1 = self.settings.get("api_key_1", "")
+        self.api_key_2 = self.settings.get("api_key_2", "")
+        self.api_key_3 = self.settings.get("api_key_3", "")
         self.model_name = self.settings.get("last_model", "")
         self.batch_size = self.settings.get("batch_size", 100)
-        self.max_retries = self.settings.get("max_retries", 5)
         self.ocr_prompt_template = self._load_ocr_prompt_template()
         self.ocr_language = self.settings.get("ocr_language", "Auto")
         self.generation_config = self.settings.get("generation_config", {})
@@ -98,17 +99,18 @@ class AppContext:
     def update_settings(self, key, value):
         self.settings[key] = value
         save_settings(self.settings)
-        if key == "api_key": self.api_key = value
+        if key == "api_key_1": self.api_key_1 = value
+        elif key == "api_key_2": self.api_key_2 = value
+        elif key == "api_key_3": self.api_key_3 = value
         elif key == "last_model": self.model_name = value
         elif key == "batch_size": self.batch_size = value
-        elif key == "max_retries": self.max_retries = value
         elif key == "ocr_language": self.ocr_language = value
         elif key == "generation_config": self.generation_config = value
         elif key == "bdsup2sub_path": self.bdsup2sub_path = value
         elif key == "safety_settings": self.safety_settings = value
 
     def get_available_models(self) -> tuple[list, str | None]:
-        return get_available_models(self.api_key)
+        return get_available_models(self.api_key_1)
 
     def inspect_video_subtitles(self, video_path: str) -> tuple[list, str | None]:
         return inspect_video_subtitles(video_path)
@@ -147,6 +149,34 @@ class AppContext:
             return image_folder, timing_file, "Error reading timing file after extraction."
         return image_folder, timing_file, None
 
+    def process_standalone_subtitle_file(self, subtitle_file_path: str) -> tuple[list | None, str | None]:
+        """Processes a standalone .sup or .pgs file."""
+        start_time = time.time()
+        logging.info(f"Processing standalone subtitle file: '{os.path.basename(subtitle_file_path)}'")
+        base_name = os.path.splitext(os.path.basename(subtitle_file_path))[0]
+        session_dir = self._create_new_session_dir(base_name)
+        self.image_folder = os.path.join(session_dir, "images")
+        os.makedirs(self.image_folder, exist_ok=True)
+
+        # Copy the source file to the session directory for processing
+        session_subtitle_file = os.path.join(self.image_folder, os.path.basename(subtitle_file_path))
+        shutil.copy(subtitle_file_path, session_subtitle_file)
+
+        xml_file_path, error = convert_sup_to_xml_and_images(session_subtitle_file, self.image_folder, self.bdsup2sub_path)
+
+        if error:
+            return None, error
+        
+        self.timing_file_path = xml_file_path
+        subtitles = parse_bdsup2sub_xml(xml_file_path)
+
+        if subtitles:
+            self.subtitles = subtitles
+            logging.info(f"Successfully processed {len(subtitles)} subtitles from '{os.path.basename(subtitle_file_path)}' in {time.time() - start_time:.2f} seconds.")
+            return subtitles, None
+        else:
+            return None, "Error reading timing data from XML file after conversion."
+
     def load_timing_file(self, timing_path: str) -> tuple[list | None, str | None]:
         start_time = time.time()
         logging.info(f"Loading timing file: '{os.path.basename(timing_path)}'...")
@@ -178,8 +208,11 @@ class AppContext:
         
     def run_ocr_pipeline(self, cancellation_event: threading.Event, progress_callback=None, indices_to_process=None) -> tuple[list | None, str]:
         start_time = time.time()
-        if not all([self.api_key, self.model_name, self.image_folder, self.current_session_dir]):
-            return None, "Missing configuration information to run OCR."
+        
+        api_keys = [key for key in [self.api_key_1, self.api_key_2, self.api_key_3] if key]
+        if not all([api_keys, self.model_name, self.image_folder, self.current_session_dir]):
+            return None, "Missing API Key, Model, or session folder to run OCR."
+
         log_folder = os.path.join(self.current_session_dir, "logs")
         os.makedirs(log_folder, exist_ok=True)
         is_hardsub_session = self.subtitles and 'channel' in self.subtitles[0]
@@ -201,7 +234,7 @@ class AppContext:
             language = "the dominant language in the image" # Fallback for Auto
         current_ocr_prompt = current_ocr_prompt.replace("{language}", language)
         
-        subtitles, message = run_ocr_pipeline(self.subtitles, self.image_folder, log_folder, self.api_key, self.model_name, self.generation_config, self.safety_settings, self.batch_size, self.max_retries, current_ocr_prompt, cancellation_event, self.video_frame_rate, progress_callback, indices_to_process)
+        subtitles, message = run_ocr_pipeline(self.subtitles, self.image_folder, log_folder, api_keys, self.model_name, self.generation_config, self.safety_settings, self.batch_size, current_ocr_prompt, cancellation_event, self.video_frame_rate, progress_callback, indices_to_process)
         
         if subtitles:
             if is_hardsub_session:

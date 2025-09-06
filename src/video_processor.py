@@ -39,18 +39,60 @@ def inspect_video_subtitles(video_path: str) -> tuple[list, str | None]:
     except Exception as e:
         return [], f"Unknown error: {e}"
 
+def convert_sup_to_xml_and_images(sup_file_path: str, output_dir: str, bdsup2sub_path: str) -> tuple[str | None, str | None]:
+    """Uses BDSup2Sub to convert a .sup or .pgs file into images and an XML timing file."""
+    xml_file_path = os.path.join(output_dir, "temp.xml")
+    
+    if not os.path.exists(bdsup2sub_path):
+        return None, f"Error: BDSup2Sub JAR not found at '{bdsup2sub_path}'."
+
+    java_path = get_tool_path('java')
+    java_command = [java_path, '-jar', bdsup2sub_path, sup_file_path, '-o', xml_file_path]
+    
+    try:
+        logging.info("Converting raw subtitles to images and timing file with BDSup2Sub...")
+        creationflags = subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
+        
+        process = subprocess.run(
+            java_command, capture_output=True, text=True, check=True,
+            encoding='utf-8', errors='replace', creationflags=creationflags
+        )
+        
+        if not os.path.exists(xml_file_path):
+             return None, "Error: BDSup2Sub ran but did not create an XML file."
+        
+        try:
+            tree = ET.parse(xml_file_path)
+            root = tree.getroot()
+            subtitle_count = len(root.findall('Events/Event'))
+            logging.info(f"BDSup2Sub completed successfully. Found {subtitle_count} subtitles.")
+        except ET.ParseError as e:
+            logging.warning(f"Could not parse XML to get subtitle count, but file was created. Error: {e}")
+            logging.info("BDSup2Sub completed successfully.")
+
+        return xml_file_path, None
+        
+    except FileNotFoundError:
+        return None, f"Error: `java` not found. Please check assets/tools. Expected at: {java_path}"
+    except subprocess.CalledProcessError as e:
+        logging.error(f"BDSup2Sub exited with error code: {e.returncode}. Please check log for details.")
+        logging.error(f"--- BDSup2Sub Full Output (Error) ---\nSTDOUT:\n{e.stdout}\nSTDERR:\n{e.stderr}")
+        return None, "Error running BDSup2Sub. Please check log for details."
+    except Exception as e:
+        logging.error(f"Unexpected error running BDSup2Sub: {e}")
+        return None, f"Error running BDSup2Sub. Details: {e}"
+
 def extract_pgs_subtitles(video_path: str, stream_index: int, session_dir: str, bdsup2sub_path: str, progress_callback=None, cancellation_event=None) -> tuple[str | None, str | None, str | None]:
     """Uses mkvextract and BDSup2Sub to extract and convert subtitles."""
     images_output_dir = os.path.join(session_dir, "images")
     os.makedirs(images_output_dir, exist_ok=True)
     
     sup_file_path = os.path.join(images_output_dir, "temp.sup")
-    xml_file_path = os.path.join(images_output_dir, "temp.xml")
-
     track_spec = f"{stream_index}:{sup_file_path}"
     
     mkvextract_path = get_tool_path('mkvextract')
     mkvextract_command = [mkvextract_path, '--gui-mode', video_path, 'tracks', track_spec]
+    
     try:
         logging.info("Stage 1/2: Extracting raw subtitle stream from video...")
         creationflags = subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
@@ -90,43 +132,10 @@ def extract_pgs_subtitles(video_path: str, stream_index: int, session_dir: str, 
     except Exception as e:
         return None, None, f"Error running mkvextract. Details: {e}"
 
-    if not os.path.exists(bdsup2sub_path):
-        return None, None, f"Error: File '{bdsup2sub_path}' not found. Please check settings."
+    logging.info("Stage 2/2: Converting extracted stream to images and timing file...")
+    xml_file_path, error = convert_sup_to_xml_and_images(sup_file_path, images_output_dir, bdsup2sub_path)
     
-    java_path = get_tool_path('java')
-    java_command = [java_path, '-jar', bdsup2sub_path, sup_file_path, '-o', xml_file_path]
-    try:
-        logging.info("Stage 2/2: Converting raw subtitles to images and timing file...")
-        creationflags = subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
+    if error:
+        return None, None, error
         
-        subprocess.run(
-            java_command, capture_output=True, text=True, check=True,
-            encoding='utf-8', errors='replace', creationflags=creationflags
-        )
-        
-        # --- LOGIC ĐẾM SỐ LƯỢNG BẮT ĐẦU TỪ ĐÂY ---
-        if not os.path.exists(xml_file_path):
-             return None, None, "Error: BDSup2Sub ran but did not create an XML file."
-        
-        try:
-            # Phân tích file XML để đếm số lượng phụ đề
-            tree = ET.parse(xml_file_path)
-            root = tree.getroot()
-            subtitle_count = len(root.findall('Events/Event'))
-            logging.info(f"BDSup2Sub completed successfully. Found {subtitle_count} subtitles.")
-        except ET.ParseError as e:
-            # Nếu không parse được XML, ghi log cảnh báo và dùng thông báo cũ
-            logging.warning(f"Could not parse XML to get subtitle count, but file was created. Error: {e}")
-            logging.info("BDSup2Sub completed successfully.")
-
-        return images_output_dir, xml_file_path, None
-        
-    except FileNotFoundError:
-        return None, None, f"Error: `java` not found. Please check assets/tools. Expected at: {java_path}"
-    except subprocess.CalledProcessError as e:
-        logging.error(f"BDSup2Sub exited with error code: {e.returncode}. Please check log for details.")
-        logging.error(f"--- BDSup2Sub Full Output (Error) ---\nSTDOUT:\n{e.stdout}\nSTDERR:\n{e.stderr}")
-        return None, None, "Error running BDSup2Sub. Please check log for details."
-    except Exception as e:
-        logging.error(f"Unexpected error running BDSup2Sub: {e}")
-        return None, None, f"Error running BDSup2Sub. Details: {e}"
+    return images_output_dir, xml_file_path, None

@@ -61,7 +61,9 @@ class SubtitlePreviewer(TkinterDnD.Tk):
         self.dnd_bind('<<Drop>>', self.handle_drop)
 
     def _init_vars(self):
-        self.api_key_var = tk.StringVar(value=self.app_context.api_key)
+        self.api_key_var = tk.StringVar(value=self.app_context.api_key_1)
+        self.api_key_2_var = tk.StringVar(value=self.app_context.api_key_2)
+        self.api_key_3_var = tk.StringVar(value=self.app_context.api_key_3)
         self.model_var = tk.StringVar(value=self.app_context.model_name)
         self.batch_size_var = tk.IntVar(value=self.app_context.batch_size)
         config = self.app_context.generation_config
@@ -211,11 +213,20 @@ class SubtitlePreviewer(TkinterDnD.Tk):
         ttk.Label(api_frame, text="Google API Key:").grid(row=0, column=0, sticky="w", pady=2)
         self.api_key_entry = ttk.Entry(api_frame, textvariable=self.api_key_var, show="*")
         self.api_key_entry.grid(row=0, column=1, columnspan=2, sticky="ew", padx=(5,0))
-        ttk.Label(api_frame, text="Model:").grid(row=1, column=0, sticky="w", pady=2)
+        
+        ttk.Label(api_frame, text="Backup Key 2:").grid(row=1, column=0, sticky="w", pady=2)
+        self.api_key_2_entry = ttk.Entry(api_frame, textvariable=self.api_key_2_var, show="*")
+        self.api_key_2_entry.grid(row=1, column=1, columnspan=2, sticky="ew", padx=(5,0))
+
+        ttk.Label(api_frame, text="Backup Key 3:").grid(row=2, column=0, sticky="w", pady=2)
+        self.api_key_3_entry = ttk.Entry(api_frame, textvariable=self.api_key_3_var, show="*")
+        self.api_key_3_entry.grid(row=2, column=1, columnspan=2, sticky="ew", padx=(5,0))
+
+        ttk.Label(api_frame, text="Model:").grid(row=3, column=0, sticky="w", pady=2)
         self.model_combobox = ttk.Combobox(api_frame, textvariable=self.model_var, state="readonly")
-        self.model_combobox.grid(row=1, column=1, sticky="w", padx=(5,5), pady=(5,0))
+        self.model_combobox.grid(row=3, column=1, sticky="w", padx=(5,5), pady=(5,0))
         self.load_models_button = ttk.Button(api_frame, text="Load/Update", command=self.load_models)
-        self.load_models_button.grid(row=1, column=2, sticky="e", pady=(5,0))
+        self.load_models_button.grid(row=3, column=2, sticky="e", pady=(5,0))
         self.model_combobox.bind('<<ComboboxSelected>>', self.on_model_change)
         return api_frame
 
@@ -379,7 +390,7 @@ class SubtitlePreviewer(TkinterDnD.Tk):
         logging.info(f"Advanced settings updated: Batch Size={self.batch_size_var.get()}, OCR Lang={self.ocr_lang_var.get()}, Temp={self.temp_var.get():.2f}")
 
     def start_ocr_thread(self, indices_to_process=None):
-        if not all([self.app_context.api_key, self.app_context.model_name, self.app_context.image_folder]):
+        if not all([self.app_context.api_key_1, self.app_context.model_name, self.app_context.image_folder]):
             messagebox.showwarning("Missing Info", "API Key, Model, and a loaded session are required.")
             return
         self._set_controls_state(tk.DISABLED, ocr_running=True)
@@ -526,11 +537,15 @@ class SubtitlePreviewer(TkinterDnD.Tk):
     def load_models(self):
         api_key = self.api_key_var.get().strip()
         if not api_key: messagebox.showerror("API Key Error", "Please enter an API Key."); return
+        
+        self.app_context.update_settings("api_key_1", self.api_key_var.get().strip())
+        self.app_context.update_settings("api_key_2", self.api_key_2_var.get().strip())
+        self.app_context.update_settings("api_key_3", self.api_key_3_var.get().strip())
+
         self.status_label.config(text="Loading model...")
         threading.Thread(target=self._load_models_worker, args=(api_key,), daemon=True).start()
         
     def _load_models_worker(self, api_key):
-        self.app_context.update_settings("api_key", api_key)
         models, error = self.app_context.get_available_models()
         if error: messagebox.showerror("Error", error); self.status_label.config(text="Error!"); return
         self.model_combobox['values'] = models
@@ -538,6 +553,7 @@ class SubtitlePreviewer(TkinterDnD.Tk):
         if last_model in models: self.model_var.set(last_model)
         elif models: self.model_combobox.current(0)
         self.app_context.update_settings("last_model", self.model_var.get())
+        logging.info(f"Model set to: {self.model_var.get()}")
         self.status_label.config(text="Ready.")
         self._set_controls_state(tk.NORMAL)
 
@@ -561,19 +577,32 @@ class SubtitlePreviewer(TkinterDnD.Tk):
 
     def on_model_change(self, event=None):
         self.app_context.update_settings("last_model", self.model_var.get())
+        logging.info(f"Model changed to: {self.model_var.get()}")
 
     def select_source_file(self):
         self.app_context.cleanup_current_session_temp()
         self.app_context.source_file_is_from_ytdlp = False
         self.ocr_completed = False
-        source_path = filedialog.askopenfilename(title="Select Source", filetypes=[("All Supported", "*.mkv *.mp4 *.ts *.xml *.html"), ("Video", "*.mkv *.mp4 *.ts"), ("Timing", "*.xml *.html")])
-        if not source_path: return
+        video_formats = "*.mkv *.mp4 *.ts *.wmv *.mov *.webm *.avi *.flv"
+        filetypes = [
+            ("All Supported", f"{video_formats} *.sup *.pgs *.xml *.html"),
+            ("Video Files", video_formats),
+            ("Subtitle Files", "*.sup *.pgs"),
+            ("Timing Files", "*.xml *.html")
+        ]
+        source_path = filedialog.askopenfilename(title="Select Source File", filetypes=filetypes)
+        if not source_path:
+            return
         self.app_context.source_file_path = source_path
         self.cancellation_event.clear()
         self._set_controls_state(tk.DISABLED, extraction_running=True)
+        
         ext = os.path.splitext(source_path)[1].lower()
-        if ext in ['.mkv', '.mp4', '.ts']:
+        
+        if ext in ['.mkv', '.mp4', '.ts', '.wmv', '.mov', '.webm', '.avi', '.flv']:
             threading.Thread(target=self.handle_video_file, args=(source_path,), daemon=True).start()
+        elif ext in ['.sup', '.pgs']:
+            threading.Thread(target=self.handle_standalone_subtitle_file, args=(source_path,), daemon=True).start()
         elif ext in ['.xml', '.html']:
             threading.Thread(target=self.handle_timing_file, args=(source_path,), daemon=True).start()
         else:
@@ -584,7 +613,8 @@ class SubtitlePreviewer(TkinterDnD.Tk):
         self.app_context.cleanup_current_session_temp()
         self.app_context.source_file_is_from_ytdlp = False
         self.ocr_completed = False
-        source_path = filedialog.askopenfilename(title="Select Video for Hardsub OCR", filetypes=[("Video Files", "*.mkv *.mp4 *.ts")])
+        video_formats = "*.mkv *.mp4 *.ts *.wmv *.mov *.webm *.avi *.flv"
+        source_path = filedialog.askopenfilename(title="Select Video for Hardsub OCR", filetypes=[("Video Files", video_formats)])
         if not source_path: return
         self.app_context.hardsub_video_path = source_path
         self.app_context.source_file_path = source_path
@@ -738,20 +768,34 @@ class SubtitlePreviewer(TkinterDnD.Tk):
         self.cancellation_event.clear()
         self._set_controls_state(tk.DISABLED, extraction_running=True)
         ext = os.path.splitext(source_path)[1].lower()
-        if ext in ['.mkv', '.mp4', '.ts']:
+        if ext in ['.mkv', '.mp4', '.ts', '.wmv', '.mov', '.webm', '.avi', '.flv']:
             threading.Thread(target=self.handle_video_file, args=(source_path,), daemon=True).start()
+        elif ext in ['.sup', '.pgs']:
+            threading.Thread(target=self.handle_standalone_subtitle_file, args=(source_path,), daemon=True).start()
         elif ext in ['.xml', '.html']:
             threading.Thread(target=self.handle_timing_file, args=(source_path,), daemon=True).start()
         else:
             messagebox.showerror("Error", "Unsupported file format for Softsub OCR.")
             self._set_controls_state(tk.NORMAL)
 
+    def handle_standalone_subtitle_file(self, subtitle_path: str):
+        """Handles the processing of a standalone .sup or .pgs file."""
+        self.status_label.config(text=f"Processing subtitle file: {os.path.basename(subtitle_path)}...")
+        subtitles, error = self.app_context.process_standalone_subtitle_file(subtitle_path)
+        if error:
+            messagebox.showerror("Error", error)
+        else:
+            self.status_label.config(text=f"Processing complete! {len(subtitles)} subtitles found.")
+            if subtitles:
+                self.navigate_to(0)
+        self._set_controls_state(tk.NORMAL)
+
     def handle_hardsub_file_drop(self, source_path):
         self.app_context.cleanup_current_session_temp()
         self.app_context.source_file_is_from_ytdlp = False
         self.ocr_completed = False
         ext = os.path.splitext(source_path)[1].lower()
-        if ext not in ['.mkv', '.mp4', '.ts']:
+        if ext not in ['.mkv', '.mp4', '.ts', '.wmv', '.mov', '.webm', '.avi', '.flv']:
             messagebox.showerror("Error", "Unsupported file format for Hardsub OCR. Please drop a video file.")
             return
         self.app_context.hardsub_video_path = source_path
@@ -818,7 +862,7 @@ class SubtitlePreviewer(TkinterDnD.Tk):
         if not self.app_context.hardsub_video_path:
             messagebox.showwarning("Warning", "Please select a video for hardsub OCR first.")
             return
-        if not all([self.app_context.api_key, self.app_context.model_name]):
+        if not all([self.app_context.api_key_1, self.app_context.model_name]):
             messagebox.showwarning("Missing Info", "API Key and Model are required.")
             return
         self.cancellation_event.clear()
@@ -902,7 +946,7 @@ class SubtitlePreviewer(TkinterDnD.Tk):
         if not self.app_context.source_file_path:
             messagebox.showwarning("Warning", "Please select a source video file first.")
             return
-        if not all([self.app_context.api_key, self.app_context.model_name]):
+        if not all([self.app_context.api_key_1, self.app_context.model_name]):
             messagebox.showwarning("Missing Info", "API Key and Model are required.")
             return
         self.cancellation_event.clear()
@@ -911,22 +955,38 @@ class SubtitlePreviewer(TkinterDnD.Tk):
 
     def run_softsub_aio_process(self):
         try:
-            video_path = self.app_context.source_file_path
-            self.after(0, lambda: self.status_label.config(text="[1/4] Scanning for subtitle streams..."))
-            streams, error = self.app_context.inspect_video_subtitles(video_path)
-            if self.cancellation_event.is_set(): return
-            if error or not streams:
-                self.after(0, lambda: messagebox.showerror("Softsub AIO Error", error or "No image subtitle streams found."))
+            source_path = self.app_context.source_file_path
+            ext = os.path.splitext(source_path)[1].lower()
+
+            # --- GIAI ĐOẠN 1 & 2: CHỈ TRÍCH XUẤT NẾU LÀ VIDEO ---
+            if ext in ['.mkv', '.mp4', '.ts', '.wmv', '.mov', '.webm', '.avi', '.flv']:
+                self.after(0, lambda: self.status_label.config(text="[1/4] Scanning for subtitle streams..."))
+                streams, error = self.app_context.inspect_video_subtitles(source_path)
+                if self.cancellation_event.is_set(): return
+                if error or not streams:
+                    self.after(0, lambda: messagebox.showerror("Softsub AIO Error", error or "No image subtitle streams found."))
+                    return
+
+                # Tự động chọn stream đầu tiên
+                stream_index = streams[0]['index']
+                stream_title = streams[0].get('tags', {}).get('title', 'Untitled')
+                self.after(0, lambda: self.status_label.config(text=f"Found stream: {stream_title}. Extracting..."))
+                
+                self.after(0, lambda: self.status_label.config(text="[2/4] Extracting subtitles..."))
+                _, _, error = self.app_context.extract_subtitles_from_video(source_path, stream_index, self.update_extraction_progress, self.cancellation_event)
+                if self.cancellation_event.is_set(): return
+                if error:
+                    self.after(0, lambda: messagebox.showerror("Softsub AIO Error", f"Subtitle extraction failed: {error}"))
+                    return
+                self.after(0, lambda: self.navigate_to(0))
+            elif self.app_context.subtitles:
+                 logging.info("Source is a subtitle/timing file, skipping extraction.")
+                 self.after(0, lambda: self.status_label.config(text="[1-2/4] Subtitle file loaded, skipping extraction."))
+            else:
+                self.after(0, lambda: messagebox.showerror("Softsub AIO Error", "No subtitles loaded to process."))
                 return
-            stream_index = streams[0]['index']
-            self.after(0, lambda: self.status_label.config(text=f"Found stream: {streams[0]['tags'].get('title', 'Untitled')}. Extracting..."))
-            self.after(0, lambda: self.status_label.config(text="[2/4] Extracting subtitles..."))
-            _, _, error = self.app_context.extract_subtitles_from_video(video_path, stream_index, self.update_extraction_progress, self.cancellation_event)
-            if self.cancellation_event.is_set(): return
-            if error:
-                self.after(0, lambda: messagebox.showerror("Softsub AIO Error", f"Subtitle extraction failed: {error}"))
-                return
-            self.after(0, lambda: self.navigate_to(0))
+
+            # --- GIAI ĐOẠN 3: OCR ---
             self.after(0, lambda: self.status_label.config(text="[3/4] Starting OCR process..."))
             ocr_subtitles, ocr_message = self.app_context.run_ocr_pipeline(self.cancellation_event, self.update_ocr_progress)
             if self.cancellation_event.is_set(): return

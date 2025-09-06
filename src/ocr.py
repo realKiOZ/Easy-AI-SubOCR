@@ -49,9 +49,21 @@ def process_batch_with_gemini(batch_of_events, image_folder, log_folder, model, 
     for event in batch_of_events:
         image_path = os.path.join(image_folder, event['image_file'])
         try:
+            # Determine MIME type based on file extension
+            ext = os.path.splitext(image_path)[1].lower()
+            if ext in ['.jpg', '.jpeg']:
+                mime_type = 'image/jpeg'
+            elif ext == '.png':
+                mime_type = 'image/png'
+            elif ext == '.webp':
+                mime_type = 'image/webp'
+            else:
+                logging.warning(f"Unsupported image format '{ext}' for file '{event['image_file']}'. Skipping.")
+                continue
+
             with open(image_path, "rb") as image_file:
                 encoded_string = base64.b64encode(image_file.read()).decode('utf-8')
-                api_request_parts.append({"mime_type": "image/png", "data": encoded_string})
+                api_request_parts.append({"mime_type": mime_type, "data": encoded_string})
         except FileNotFoundError:
             logging.warning(f"Image file not found: '{event['image_file']}'. Skipping.")
             continue
@@ -60,6 +72,7 @@ def process_batch_with_gemini(batch_of_events, image_folder, log_folder, model, 
         return None, "No images to process in batch.", "SKIPPED"
 
     try:
+        # NOTE: The 'thinking_config' feature was removed due to incompatibility with the installed SDK version.
         response = model.generate_content(
             api_request_parts,
             generation_config=generation_config,
@@ -78,7 +91,8 @@ def process_batch_with_gemini(batch_of_events, image_folder, log_folder, model, 
             parsed_json = json.loads(json_content)
             
             # --- Start Validation ---
-            validation_error = validate_gemini_response(parsed_json, len(batch_of_events))
+            expected_image_count = len(api_request_parts) - 1
+            validation_error = validate_gemini_response(parsed_json, expected_image_count)
             if validation_error:
                 logging.error(f"Batch {batch_start_index} validation failed: {validation_error}")
                 # Save raw response for debugging
@@ -100,18 +114,19 @@ def process_batch_with_gemini(batch_of_events, image_folder, log_folder, model, 
             
     except Exception as e:
         error_str = str(e)
+        logging.warning(f"Full API Error: {error_str}") # Log the full error for debugging
         error_type = "GENERAL_API_ERROR"
         if "resource exhausted" in error_str.lower() or "userRateLimitExceeded" in error_str or "429" in error_str:
             error_type = "RATE_LIMIT"
         return None, error_str, error_type
 
-def run_ocr_pipeline(subtitles: list, image_folder: str, log_folder: str, api_key: str, model_name: str, generation_config: dict, safety_settings: list, batch_size: int, max_retries: int, ocr_prompt: str, cancellation_event: threading.Event, frame_rate: float, progress_callback=None, indices_to_process=None) -> tuple[list | None, str]:
+def run_ocr_pipeline(subtitles: list, image_folder: str, log_folder: str, api_keys: list, model_name: str, generation_config: dict, safety_settings: list, batch_size: int, ocr_prompt: str, cancellation_event: threading.Event, frame_rate: float, progress_callback=None, indices_to_process=None) -> tuple[list | None, str]:
     logging.info("Starting OCR process...")
-    try:
-        genai.configure(api_key=api_key)
-        model = genai.GenerativeModel(model_name)
-    except Exception as e:
-        return None, f"API or model configuration error: {e}"
+    
+    if not api_keys:
+        return None, "No API keys provided."
+    
+    model = genai.GenerativeModel(model_name)
 
     if not subtitles: return None, "No subtitles to process."
 
@@ -130,31 +145,56 @@ def run_ocr_pipeline(subtitles: list, image_folder: str, log_folder: str, api_ke
         original_indices_in_batch = [idx for idx, process in enumerate(batch_mask) if process]
 
         results, error_message, error_type = None, "", None
-        for attempt in range(max_retries):
-            if cancellation_event.is_set(): return None, "Operation cancelled by user."
+        key_index = 0
+        batch_successful = False
+        
+        while not batch_successful:
+            if cancellation_event.is_set():
+                logging.warning(f"OCR cancelled by user during batch {i}.")
+                all_failed_indices.add(i)
+                break 
+
+            current_key = api_keys[key_index]
+            logging.info(f"Processing batch {i} with API Key #{key_index + 1}...")
             
-            results, error_message, error_type = process_batch_with_gemini(batch_to_process, image_folder, log_folder, model, i, generation_config, safety_settings, ocr_prompt)
+            try:
+                genai.configure(api_key=current_key)
+            except Exception as e:
+                logging.error(f"Failed to configure API Key #{key_index + 1}: {e}")
+                key_index = (key_index + 1) % len(api_keys)
+                time.sleep(1)
+                continue
+
+            for attempt in range(3): # Retry 3 times per key
+                if cancellation_event.is_set():
+                    break
+
+                results, error_message, error_type = process_batch_with_gemini(batch_to_process, image_folder, log_folder, model, i, generation_config, safety_settings, ocr_prompt)
+                
+                if results is not None:
+                    all_failed_indices.discard(i)
+                    batch_successful = True
+                    break
+                else:
+                    logging.warning(f"Batch {i} failed on Key #{key_index + 1} (attempt {attempt+1}/3). Retrying...")
+                    logging.debug(f"Full error for batch {i}: {error_message}")
+                    
+                    wait_time = 9 if error_type == "RATE_LIMIT" else 5
+                    if error_type == "RATE_LIMIT":
+                        logging.info(f"Rate limit detected. Waiting for {wait_time} seconds...")
+                    else:
+                        logging.info(f"An error occurred. Waiting for {wait_time} seconds before retrying...")
+                    
+                    time.sleep(wait_time)
             
-            if results is not None:
-                all_failed_indices.discard(i)
+            if cancellation_event.is_set():
+                logging.warning(f"OCR cancelled by user during batch {i}.")
+                all_failed_indices.add(i)
                 break
-            else:
-                logging.warning(f"Batch {i} failed (attempt {attempt+1}/{max_retries}). Retrying...")
-                logging.debug(f"Full error for batch {i}: {error_message}")
-                
-                wait_time = 20 if error_type == "RATE_LIMIT" else 2 ** attempt
-                if error_type == "RATE_LIMIT":
-                    logging.info(f"Rate limit detected. Waiting for {wait_time} seconds...")
-                
-                time.sleep(wait_time)
-        else: # This block runs if the for loop completes without a `break`
-            logging.error(f"Batch {i} failed permanently after {max_retries} retries.")
-            all_failed_indices.add(i)
-            # Mark subtitles in the failed batch
-            for original_relative_index in original_indices_in_batch:
-                absolute_index = i + original_relative_index
-                if 0 <= absolute_index < len(subtitles):
-                    subtitles[absolute_index]['text'] = f"[OCR FAILED - BATCH {i}]"
+
+            if not batch_successful:
+                logging.warning(f"Batch {i} failed on all 3 attempts with Key #{key_index + 1}. Switching to next key.")
+                key_index = (key_index + 1) % len(api_keys)
             
         if results is not None:
             # This block runs if the batch was successful

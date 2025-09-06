@@ -10,7 +10,7 @@ def create_softsub_tab(parent, gui_instance):
 
     btn_select_source = ttk.Button(
         control_frame, 
-        text="Select Source (Video/XML/HTML)", 
+        text="Select Source (Video/SUP/PGS/XML...)", 
         command=gui_instance.select_source_file
     )
     btn_select_source.pack(fill=tk.X, pady=2)
