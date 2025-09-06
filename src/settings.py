@@ -15,7 +15,7 @@ DEFAULT_SETTINGS = {
     "batch_size": 128,
     "ocr_language": "Auto",
     "generation_config": {
-        "temperature": 0.1,
+        "temperature": 0.3,
         "top_k": 2,
         "top_p": 0.5
     },

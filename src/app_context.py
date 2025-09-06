@@ -246,16 +246,31 @@ class AppContext:
         else:
             current_ocr_prompt = self.ocr_prompt_template
 
-        # Replace language placeholder in the selected prompt
+        # Determine language for the prompt
         if self.ocr_language and self.ocr_language.lower() != 'auto':
             language = self.ocr_language
         else:
             language = "the dominant language in the image" # Fallback for Auto
-        current_ocr_prompt = current_ocr_prompt.replace("{language}", language)
         
-        subtitles, message = run_ocr_pipeline(self.subtitles, self.image_folder, log_folder, api_keys, self.model_name, self.generation_config, self.safety_settings, self.batch_size, current_ocr_prompt, cancellation_event, self.video_frame_rate, progress_callback, indices_to_process)
+        subtitles, message = run_ocr_pipeline(
+            subtitles=self.subtitles, 
+            image_folder=self.image_folder, 
+            log_folder=log_folder, 
+            api_keys=api_keys, 
+            model_name=self.model_name, 
+            generation_config=self.generation_config, 
+            safety_settings=self.safety_settings, 
+            batch_size=self.batch_size, 
+            ocr_prompt=current_ocr_prompt, 
+            language=language,  # Pass language separately
+            cancellation_event=cancellation_event, 
+            frame_rate=self.video_frame_rate, 
+            progress_callback=progress_callback, 
+            indices_to_process=indices_to_process
+        )
         
-        if subtitles:
+        if subtitles is not None:
+            logging.info(f"[DEBUG] app_context.py: Received {len(subtitles)} subtitles from ocr.py.")
             if is_hardsub_session:
                 logging.info("Post-processing hardsub results...")
                 for sub in subtitles:

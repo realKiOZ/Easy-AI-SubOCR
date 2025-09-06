@@ -7,6 +7,7 @@ import re
 import logging
 import threading
 from itertools import compress
+from queue import Queue, Empty
 
 from src.settings import save_settings, load_settings
 from src.utils import merge_subtitles
@@ -42,7 +43,6 @@ def validate_gemini_response(response_data, expected_count):
         if not isinstance(item['text'], str):
             return f"Validation failed: 'text' at item {i} is not a string."
     
-    # Validate indices are unique and sequential
     received_indices = sorted([item['index'] for item in response_data])
     expected_indices = list(range(expected_count))
 
@@ -51,20 +51,33 @@ def validate_gemini_response(response_data, expected_count):
             
     return None
 
-def process_batch_with_gemini(batch_of_events, image_folder, log_folder, model, batch_start_index, generation_config, safety_settings, ocr_prompt):
-    api_request_parts = [ocr_prompt]
+def process_batch_with_gemini(batch_of_events_with_indices, image_folder, log_folder, model, batch_start_index, generation_config, safety_settings, ocr_prompt, language):
+    
+    batch_of_events = [event for _, event in batch_of_events_with_indices]
+
+    valid_image_events = []
     for event in batch_of_events:
         image_path = os.path.join(image_folder, event['image_file'])
+        ext = os.path.splitext(image_path)[1].lower()
+        if ext in ['.jpg', '.jpeg', '.png', '.webp'] and os.path.exists(image_path):
+            valid_image_events.append(event)
+        else:
+            logging.warning(f"Skipping invalid or non-existent image: {event['image_file']}")
+
+    if not valid_image_events:
+        return None, "No valid images to process in batch.", "SKIPPED"
+        
+    image_count = len(valid_image_events)
+    
+    formatted_prompt = ocr_prompt.format(image_count=image_count, language=language)
+    api_request_parts = [formatted_prompt]
+
+    for event in valid_image_events:
+        image_path = os.path.join(image_folder, event['image_file'])
         try:
-            # Determine MIME type based on file extension
             ext = os.path.splitext(image_path)[1].lower()
-            if ext in ['.jpg', '.jpeg']:
-                mime_type = 'image/jpeg'
-            elif ext == '.png':
-                mime_type = 'image/png'
-            elif ext == '.webp':
-                mime_type = 'image/webp'
-            else:
+            mime_type = f'image/{ext.replace(".", "")}'
+            if ext not in ['.jpeg', '.jpg', '.png', '.webp']:
                 logging.warning(f"Unsupported image format '{ext}' for file '{event['image_file']}'. Skipping.")
                 continue
 
@@ -75,11 +88,7 @@ def process_batch_with_gemini(batch_of_events, image_folder, log_folder, model, 
             logging.warning(f"Image file not found: '{event['image_file']}'. Skipping.")
             continue
     
-    if len(api_request_parts) <= 1: 
-        return None, "No images to process in batch.", "SKIPPED"
-
     try:
-        # NOTE: The 'thinking_config' feature was removed due to incompatibility with the installed SDK version.
         response = model.generate_content(
             api_request_parts,
             generation_config=generation_config,
@@ -97,16 +106,13 @@ def process_batch_with_gemini(batch_of_events, image_folder, log_folder, model, 
             
             parsed_json = json.loads(json_content)
             
-            # --- Start Validation ---
-            expected_image_count = len(api_request_parts) - 1
+            expected_image_count = len(valid_image_events)
             validation_error = validate_gemini_response(parsed_json, expected_image_count)
             if validation_error:
                 logging.error(f"Batch {batch_start_index} validation failed: {validation_error}")
-                # Save raw response for debugging
                 with open(log_filepath.replace('.json', '.txt'), 'w', encoding='utf-8') as f:
                     f.write(response.text)
                 return None, validation_error, "VALIDATION_ERROR"
-            # --- End Validation ---
 
             with open(log_filepath, 'w', encoding='utf-8') as f:
                 json.dump(parsed_json, f, indent=4, ensure_ascii=False)
@@ -121,133 +127,155 @@ def process_batch_with_gemini(batch_of_events, image_folder, log_folder, model, 
             
     except Exception as e:
         error_str = str(e)
-        logging.warning(f"Full API Error: {error_str}") # Log the full error for debugging
+        logging.warning(f"Full API Error: {error_str}")
         error_type = "GENERAL_API_ERROR"
         if "resource exhausted" in error_str.lower() or "userRateLimitExceeded" in error_str or "429" in error_str:
             error_type = "RATE_LIMIT"
         return None, error_str, error_type
 
-def run_ocr_pipeline(subtitles: list, image_folder: str, log_folder: str, api_keys: list, model_name: str, generation_config: dict, safety_settings: list, batch_size: int, ocr_prompt: str, cancellation_event: threading.Event, frame_rate: float, progress_callback=None, indices_to_process=None) -> tuple[list | None, str]:
-    logging.info("Starting OCR process...")
+def ocr_worker(
+    worker_id, api_key, job_queue, results_queue, failed_indices_set,
+    image_folder, log_folder, model_name, generation_config, safety_settings, ocr_prompt, language,
+    cancellation_event, progress_lock, total_batches, processed_batches, progress_callback
+):
+    MAX_RETRIES = 6
+    RETRY_DELAY = 5
     
-    if not api_keys:
-        return None, "No API keys provided."
-    
-    model = genai.GenerativeModel(model_name)
+    try:
+        genai.configure(api_key=api_key)
+        model = genai.GenerativeModel(model_name)
+        logging.info(f"Worker-{worker_id} initialized with API Key.")
+    except Exception as e:
+        logging.error(f"Worker-{worker_id} failed to initialize with API Key: {e}")
+        return
 
-    if not subtitles: return None, "No subtitles to process."
+    while not cancellation_event.is_set():
+        try:
+            batch_start_index, batch_with_indices = job_queue.get(timeout=1)
+        except Empty:
+            # Queue is empty and timeout occurred, worker can exit.
+            break
 
-    process_mask = [True] * len(subtitles) if indices_to_process is None else [i in indices_to_process for i in range(len(subtitles))]
-    all_failed_indices = set(load_settings().get('last_failed_batches', []))
-    total_subs_to_process = sum(process_mask)
-    processed_count = 0
-
-    for i in range(0, len(subtitles), batch_size):
-        if cancellation_event.is_set(): return None, "Operation cancelled by user."
+        logging.info(f"Worker-{worker_id} picked up batch {batch_start_index}.")
         
-        batch_mask = process_mask[i:i + batch_size]
-        if not any(batch_mask): continue
-
-        batch_to_process = list(compress(subtitles[i:i + batch_size], batch_mask))
-        original_indices_in_batch = [idx for idx, process in enumerate(batch_mask) if process]
-
-        results, error_message, error_type = None, "", None
-        key_index = 0
-        batch_successful = False
-        
-        while not batch_successful:
+        batch_results = None
+        for attempt in range(MAX_RETRIES):
             if cancellation_event.is_set():
-                logging.warning(f"OCR cancelled by user during batch {i}.")
-                all_failed_indices.add(i)
-                break 
-
-            current_key = api_keys[key_index]
-            logging.info(f"Processing batch {i} with API Key #{key_index + 1}...")
-            
-            try:
-                genai.configure(api_key=current_key)
-            except Exception as e:
-                logging.error(f"Failed to configure API Key #{key_index + 1}: {e}")
-                key_index = (key_index + 1) % len(api_keys)
-                time.sleep(1)
-                continue
-
-            for attempt in range(3): # Retry 3 times per key
-                if cancellation_event.is_set():
-                    break
-
-                results, error_message, error_type = process_batch_with_gemini(batch_to_process, image_folder, log_folder, model, i, generation_config, safety_settings, ocr_prompt)
-                
-                if results is not None:
-                    all_failed_indices.discard(i)
-                    batch_successful = True
-                    break
-                else:
-                    logging.warning(f"Batch {i} failed on Key #{key_index + 1} (attempt {attempt+1}/3). Retrying...")
-                    logging.debug(f"Full error for batch {i}: {error_message}")
-                    
-                    wait_time = 9 if error_type == "RATE_LIMIT" else 5
-                    if error_type == "RATE_LIMIT":
-                        logging.info(f"Rate limit detected. Waiting for {wait_time} seconds...")
-                    else:
-                        logging.info(f"An error occurred. Waiting for {wait_time} seconds before retrying...")
-                    
-                    time.sleep(wait_time)
-            
-            if cancellation_event.is_set():
-                logging.warning(f"OCR cancelled by user during batch {i}.")
-                all_failed_indices.add(i)
                 break
 
-            if not batch_successful:
-                logging.warning(f"Batch {i} failed on all 3 attempts with Key #{key_index + 1}. Switching to next key.")
-                key_index = (key_index + 1) % len(api_keys)
-            
-        if results is not None:
-            # This block runs if the batch was successful
-            for res in results:
-                try:
-                    relative_index = res['index']
-                    text = res.get('text', '')
-                    # Find the original subtitle this result corresponds to
-                    original_relative_index = original_indices_in_batch[relative_index]
-                    absolute_index = i + original_relative_index
-                    if 0 <= absolute_index < len(subtitles):
-                        subtitles[absolute_index]['text'] = text
-                except (TypeError, KeyError, IndexError) as e:
-                    logging.error(f"Error processing result item in batch {i}: {e}. Result: {res}")
+            results, error_message, error_type = process_batch_with_gemini(
+                batch_with_indices, image_folder, log_folder, model, batch_start_index,
+                generation_config, safety_settings, ocr_prompt, language
+            )
 
-        processed_count += len(batch_to_process)
-        if progress_callback:
-            progress_percentage = (processed_count / total_subs_to_process) * 100 if total_subs_to_process > 0 else 0
-            progress_callback(f"OCR: {processed_count}/{total_subs_to_process}", progress_percentage)
+            if results is not None:
+                logging.info(f"Worker-{worker_id} successfully processed batch {batch_start_index} on attempt {attempt + 1}.")
+                # Pair results with their original absolute indices
+                for res in results:
+                    try:
+                        # The index from Gemini (0, 1, 2...) corresponds to the order in batch_with_indices
+                        original_absolute_index = batch_with_indices[res['index']][0]
+                        text = res.get('text', '')
+                        results_queue.put((original_absolute_index, text))
+                    except (IndexError, KeyError) as e:
+                        logging.error(f"Worker-{worker_id} encountered an error matching result to index for batch {batch_start_index}: {e}")
+                batch_results = results
+                break
+            else:
+                logging.warning(f"Worker-{worker_id} failed batch {batch_start_index} on attempt {attempt + 1}: {error_type} - {error_message}")
+                if attempt < MAX_RETRIES - 1:
+                    time.sleep(RETRY_DELAY)
+        
+        if batch_results is None:
+            logging.error(f"Worker-{worker_id} failed batch {batch_start_index} after {MAX_RETRIES} attempts. Skipping.")
+            failed_indices_set.add(batch_start_index)
+
+        with progress_lock:
+            processed_batches[0] += 1
+            if progress_callback:
+                percentage = (processed_batches[0] / total_batches) * 100
+                progress_callback(f"OCR: {processed_batches[0]}/{total_batches} batches", percentage)
+        
+        job_queue.task_done()
+
+def run_ocr_pipeline(subtitles: list, image_folder: str, log_folder: str, api_keys: list, model_name: str, generation_config: dict, safety_settings: list, batch_size: int, ocr_prompt: str, language: str, cancellation_event: threading.Event, frame_rate: float, progress_callback=None, indices_to_process=None) -> tuple[list | None, str]:
+    if not api_keys: return None, "No API keys provided."
+    if not subtitles: return None, "No subtitles to process."
+
+    logging.info(f"Starting parallel OCR process with {len(api_keys)} API key(s).")
+
+    if indices_to_process is not None:
+        all_indices_to_process = set()
+        for start_index in indices_to_process:
+            all_indices_to_process.update(range(start_index, min(start_index + batch_size, len(subtitles))))
+        process_mask = [i in all_indices_to_process for i in range(len(subtitles))]
+    else:
+        process_mask = [True] * len(subtitles)
+
+    job_queue = Queue()
+    total_batches = 0
+    for i in range(0, len(subtitles), batch_size):
+        batch_mask = process_mask[i:i + batch_size]
+        if not any(batch_mask):
+            continue
+        
+        # Create a list of tuples: (absolute_index, event_dictionary)
+        batch_with_indices = [
+            (i + idx, subtitles[i + idx]) 
+            for idx, process in enumerate(batch_mask) if process
+        ]
+        
+        if batch_with_indices:
+            job_queue.put((i, batch_with_indices))
+            total_batches += 1
+
+    if total_batches == 0:
+        return subtitles, "No subtitles needed processing."
+
+    results_queue = Queue()
+    failed_indices_set = set()
+    progress_lock = threading.Lock()
+    processed_batches = [0]
+
+    threads = []
+    for i in range(len(api_keys)):
+        worker = threading.Thread(
+            target=ocr_worker,
+            args=(
+                i + 1, api_keys[i], job_queue, results_queue, failed_indices_set,
+                image_folder, log_folder, model_name, generation_config, safety_settings, ocr_prompt, language,
+                cancellation_event, progress_lock, total_batches, processed_batches, progress_callback
+            )
+        )
+        threads.append(worker)
+        worker.start()
+
+    job_queue.join()
+    
+    for t in threads:
+        t.join()
+
+    if cancellation_event.is_set():
+        return None, "OCR process cancelled by user."
+
+    # Process results from the queue
+    while not results_queue.empty():
+        absolute_index, text = results_queue.get()
+        if 0 <= absolute_index < len(subtitles):
+            subtitles[absolute_index]['text'] = text
 
     settings = load_settings()
+    existing_failed = set(settings.get('last_failed_batches', []))
+    all_failed_indices = existing_failed.union(failed_indices_set)
     settings['last_failed_batches'] = sorted(list(all_failed_indices))
     save_settings(settings)
     
     if not all_failed_indices:
-        initial_count = len(subtitles)
-        # Filter out subtitles that are empty OR still have the failure message
-        filtered_subtitles = [
-            sub for sub in subtitles 
-            if sub.get('text', '').strip() and not sub.get('text', '').startswith("[OCR FAILED")
-        ]
-        removed_count = initial_count - len(filtered_subtitles)
-        if removed_count > 0:
-            logging.info(f"Removed {removed_count} empty or failed subtitle entries.")
-
-        if frame_rate > 0:
-            logging.info("Merging identical adjacent subtitles...")
-            merged_count_before = len(filtered_subtitles)
-            filtered_subtitles = merge_subtitles(filtered_subtitles, frame_rate)
-            merged_count_after = len(filtered_subtitles)
-            if merged_count_before > merged_count_after:
-                logging.info(f"Merged {merged_count_before - merged_count_after} subtitle entries.")
-        else:
-            logging.warning("Frame rate is 0, skipping subtitle merge.")
-        
-        return filtered_subtitles, "OCR process completed."
+        # Return the original subtitles list populated with OCR results.
+        # Filtering and merging are disabled as per user request.
+        logging.info("OCR process completed. Subtitle filtering and merging are disabled.")
+        logging.info(f"[DEBUG] ocr.py: Returning {len(subtitles)} subtitles to app_context.")
+        return subtitles, "OCR process completed."
     else:
-        logging.warning(f"OCR process completed with {len(all_failed_indices)} failed batches. Please check the logs for details. Empty lines were not removed.")
+        logging.warning(f"OCR process completed with {len(all_failed_indices)} failed batches. Please check the logs for details.")
         return subtitles, "OCR process completed with some failed batches."

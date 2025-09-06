@@ -508,7 +508,7 @@ class SubtitlePreviewer(TkinterDnD.Tk):
             return
         source_path = self.app_context.source_file_path
         base_name = os.path.splitext(os.path.basename(source_path))[0]
-        initial_dir = self.app_context.settings.get("last_save_dir", os.path.expanduser("~"))
+        initial_dir = os.path.dirname(source_path)
         ocr_lang = self.ocr_lang_var.get().strip()
         lang_map = {'Vietnamese': 'vi', 'English': 'en', 'Japanese': 'ja', 'Chinese': 'zh','Korean': 'ko', 'French': 'fr', 'German': 'de', 'Spanish': 'es','Italian': 'it', 'Russian': 'ru', 'Portuguese': 'pt', 'Dutch': 'nl','Polish': 'pl', 'Turkish': 'tr', 'Arabic': 'ar', 'Hindi': 'hi','Thai': 'th', 'Indonesian': 'id', 'Malay': 'ms', 'Filipino': 'fil'}
         lang_code = lang_map.get(ocr_lang)
