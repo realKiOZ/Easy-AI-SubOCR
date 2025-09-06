@@ -83,7 +83,7 @@ def process_subtitle_channel(has_text, current_event, frame_time_sec, all_events
         current_event["end_time"] = None
         current_event["end_frame"] = None
 
-def run_hardsub_pipeline(video_path, output_image_folder, options, progress_callback=None, cancellation_event=None):
+def run_hardsub_pipeline(video_path, output_image_folder, options, run_id, progress_callback=None, cancellation_event=None):
     start_time = time.time()
     if not os.path.exists(video_path): return None, "Video file not found.", None
     if not os.path.exists(EAST_MODEL_PATH): return None, "EAST text detection model not found.", None
@@ -205,7 +205,7 @@ def run_hardsub_pipeline(video_path, output_image_folder, options, progress_call
                             percentage = 50 + ((i / total_events) * 50)
                             progress_callback(progress_message, percentage)
 
-                        event_temp_dir = os.path.join(APP_TEMP_PATH, f"vsf_event_{channel}_{event.get('start_frame', 0)}_{event.get('end_frame', 0)}")
+                        event_temp_dir = os.path.join(APP_TEMP_PATH, f"vsf_event_{run_id}_{channel}_{event.get('start_frame', 0)}_{event.get('end_frame', 0)}")
                         if os.path.exists(event_temp_dir): shutil.rmtree(event_temp_dir)
                         os.makedirs(event_temp_dir, exist_ok=True)
                         output_dir_norm = os.path.abspath(event_temp_dir).replace('/', '\\')
@@ -268,7 +268,7 @@ def run_hardsub_pipeline(video_path, output_image_folder, options, progress_call
     
     return [], None, flag_file
 
-def run_vsf_only_pipeline(video_path, output_image_folder, options, progress_callback=None, cancellation_event=None):
+def run_vsf_only_pipeline(video_path, output_image_folder, options, run_id, progress_callback=None, cancellation_event=None):
     start_time = time.time()
     if not os.path.exists(video_path):
         return None, "Video file not found.", None
@@ -369,7 +369,7 @@ def run_vsf_only_pipeline(video_path, output_image_folder, options, progress_cal
                 if progress_callback:
                     progress_callback(initial_message, -1)
 
-                run_temp_dir = os.path.join(APP_TEMP_PATH, f"vsf_run_{job}_{uuid.uuid4().hex[:8]}")
+                run_temp_dir = os.path.join(APP_TEMP_PATH, f"vsf_run_{run_id}_{job}_{uuid.uuid4().hex[:8]}")
                 os.makedirs(run_temp_dir, exist_ok=True)
 
                 exe_path_norm = VSF_EXECUTABLE_PATH_CLI.replace('/', '\\')

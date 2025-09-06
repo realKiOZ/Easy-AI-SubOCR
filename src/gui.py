@@ -616,7 +616,7 @@ class SubtitlePreviewer(TkinterDnD.Tk):
             threading.Thread(target=self.handle_hardsub_video_vsf_only, args=(video_path, options), daemon=True).start()
 
     def handle_hardsub_video_east(self, video_path, options):
-        subtitles, error, flag_file = self.app_context.process_hardsub_video_east(video_path, options, self.update_ocr_progress, self.cancellation_event)
+        subtitles, error, flag_file, run_id = self.app_context.process_hardsub_video_east(video_path, options, self.update_ocr_progress, self.cancellation_event)
         def update_ui_after_east():
             if error:
                 messagebox.showerror("Hardsub Error", error)
@@ -627,14 +627,14 @@ class SubtitlePreviewer(TkinterDnD.Tk):
                 self.status_label.config(text=f"Found {len(subtitles)} potential subtitles. Refining with VSF in background...")
                 self.navigate_to(0)
             if flag_file:
-                self.monitor_vsf_process(flag_file, "EAST+VSF")
+                self.monitor_vsf_process(flag_file, "EAST+VSF", run_id)
             else:
                 self.status_label.config(text=f"Process complete! Found {len(subtitles) or 0} subtitles.")
                 self._set_controls_state(tk.NORMAL)
         self.after(0, update_ui_after_east)
 
     def handle_hardsub_video_vsf_only(self, video_path, options):
-        _, error, flag_file = self.app_context.process_hardsub_video_vsf_only(video_path, options, self.update_ocr_progress, self.cancellation_event)
+        _, error, flag_file, run_id = self.app_context.process_hardsub_video_vsf_only(video_path, options, self.update_ocr_progress, self.cancellation_event)
         def update_ui_after_vsf_start():
             if error:
                 messagebox.showerror("VSF Error", error)
@@ -642,21 +642,21 @@ class SubtitlePreviewer(TkinterDnD.Tk):
                 self._set_controls_state(tk.NORMAL)
                 return
             if flag_file:
-                self.monitor_vsf_process(flag_file, "VSF-Only")
+                self.monitor_vsf_process(flag_file, "VSF-Only", run_id)
             else:
                 self.status_label.config(text="VSF process finished unexpectedly.")
                 self._set_controls_state(tk.NORMAL)
         self.after(0, update_ui_after_vsf_start)
 
-    def monitor_vsf_process(self, flag_file, method_name):
+    def monitor_vsf_process(self, flag_file, method_name, run_id):
         if os.path.exists(flag_file):
             self.status_label.config(text=f"{method_name} is running... This may take a while.")
-            self.after(2000, self.monitor_vsf_process, flag_file, method_name)
+            self.after(2000, self.monitor_vsf_process, flag_file, method_name, run_id)
         else:
             self.status_label.config(text=f"{method_name} refinement complete. Merging results...")
             logging.info(f"{method_name} process finished. Merging results.")
             self.update_idletasks()
-            refined_subtitles = self.app_context.merge_vsf_results()
+            refined_subtitles = self.app_context.merge_vsf_results(run_id)
             if refined_subtitles:
                 self.status_label.config(text=f"Merge complete! Found {len(refined_subtitles)} refined subtitles.")
                 self.navigate_to(0)
@@ -831,11 +831,11 @@ class SubtitlePreviewer(TkinterDnD.Tk):
             process_method = self.hardsub_process_var.get()
             self.after(0, lambda: self.status_label.config(text=f"[1/4] Starting subtitle detection ({process_method})..."))
             common_options = {"scan_top": self.hardsub_scan_top_var.get(), "scan_bottom": self.hardsub_scan_bottom_var.get(), "scan_area_height": self.hardsub_scan_area_height_var.get()}
-            subtitles, error, flag_file = None, None, None
+            subtitles, error, flag_file, run_id = None, None, None, None
             if process_method == "east_vsf":
                 east_options = {"use_gpu": self.east_use_gpu_var.get(), "confidence": self.east_confidence_var.get(), "quality": int(self.east_quality_var.get().replace('px', ''))}
                 options = {**common_options, **east_options}
-                subtitles, error, flag_file = self.app_context.process_hardsub_video_east(video_path, options, self.update_ocr_progress, self.cancellation_event)
+                subtitles, error, flag_file, run_id = self.app_context.process_hardsub_video_east(video_path, options, self.update_ocr_progress, self.cancellation_event)
             else:
                 vsf_adv_options = {
                     "moderate_threshold": self.vsf_moderate_threshold_var.get(),
@@ -845,7 +845,7 @@ class SubtitlePreviewer(TkinterDnD.Tk):
                     "min_sum_color_diff": self.vsf_min_sum_color_diff_var.get()
                 }
                 options = {**common_options, **vsf_adv_options}
-                _, error, flag_file = self.app_context.process_hardsub_video_vsf_only(video_path, options, self.update_ocr_progress, self.cancellation_event)
+                _, error, flag_file, run_id = self.app_context.process_hardsub_video_vsf_only(video_path, options, self.update_ocr_progress, self.cancellation_event)
             if self.cancellation_event.is_set(): return
             if error:
                 self.after(0, lambda: messagebox.showerror("All-in-One Error", f"Subtitle detection failed: {error}"))
@@ -863,7 +863,7 @@ class SubtitlePreviewer(TkinterDnD.Tk):
                     pass
                 self.after(0, stop_vsf_progress)
 
-                self.app_context.merge_vsf_results()
+                self.app_context.merge_vsf_results(run_id)
                 self.after(0, lambda: self.navigate_to(0))
             if not self.app_context.subtitles:
                 self.after(0, lambda: messagebox.showwarning("All-in-One Info", "No subtitles found after detection phase."))

@@ -241,7 +241,8 @@ class AppContext:
         
         self.image_folder = os.path.join(session_dir, "images")
         
-        subtitles, error, flag_file = run_hardsub_pipeline(video_path, self.image_folder, options, progress_callback, cancellation_event)
+        run_id = uuid.uuid4().hex
+        subtitles, error, flag_file = run_hardsub_pipeline(video_path, self.image_folder, options, run_id, progress_callback, cancellation_event)
 
         if error:
             logging.error(f"EAST+VSF pipeline failed: {error}")
@@ -254,7 +255,7 @@ class AppContext:
                 json.dump(subtitles, f, indent=2)
         
         logging.info(f"EAST+VSF analysis complete in {time.time() - start_time:.2f} seconds.")
-        return self.subtitles, None, flag_file
+        return self.subtitles, None, flag_file, run_id
 
     def process_hardsub_video_vsf_only(self, video_path: str, options: dict, progress_callback=None, cancellation_event=None) -> tuple[list | None, str | None, str | None]:
         start_time = time.time()
@@ -279,7 +280,8 @@ class AppContext:
         
         self.image_folder = os.path.join(session_dir, "images")
         
-        subtitles, error, flag_file = run_vsf_only_pipeline(video_path, self.image_folder, options, progress_callback, cancellation_event)
+        run_id = uuid.uuid4().hex
+        subtitles, error, flag_file = run_vsf_only_pipeline(video_path, self.image_folder, options, run_id, progress_callback, cancellation_event)
 
         if error:
             logging.error(f"VSF-Only pipeline failed: {error}")
@@ -288,16 +290,16 @@ class AppContext:
         self.subtitles = []
         
         logging.info(f"VSF-Only analysis started in {time.time() - start_time:.2f} seconds.")
-        return self.subtitles, None, flag_file
+        return self.subtitles, None, flag_file, run_id
 
-    def merge_vsf_results(self) -> list | None:
+    def merge_vsf_results(self, run_id: str) -> list | None:
         start_time = time.time()
         if not self.current_session_dir:
             return None
         
         refined_subtitles = []
         
-        vsf_output_dirs = [d for d in os.listdir(APP_TEMP_PATH) if d.startswith(('vsf_event_', 'vsf_run_'))]
+        vsf_output_dirs = [d for d in os.listdir(APP_TEMP_PATH) if d.startswith((f'vsf_event_{run_id}', f'vsf_run_{run_id}'))]
         
         if not vsf_output_dirs:
             logging.warning("No VSF output directories found for merging.")
