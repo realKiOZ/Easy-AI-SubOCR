@@ -12,10 +12,10 @@ DEFAULT_SETTINGS = {
     "api_key_2": "",
     "api_key_3": "",
     "last_model": "gemini-2.5-flash",
-    "batch_size": 128,
+    "batch_size": 100,
     "ocr_language": "Auto",
     "generation_config": {
-        "temperature": 0.3,
+        "temperature": 0.2,
         "top_k": 2,
         "top_p": 0.5
     },
