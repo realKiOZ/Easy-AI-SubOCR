@@ -958,32 +958,57 @@ class SubtitlePreviewer(TkinterDnD.Tk):
             source_path = self.app_context.source_file_path
             ext = os.path.splitext(source_path)[1].lower()
 
-            # --- GIAI ĐOẠN 1 & 2: CHỈ TRÍCH XUẤT NẾU LÀ VIDEO ---
-            if ext in ['.mkv', '.mp4', '.ts', '.wmv', '.mov', '.webm', '.avi', '.flv']:
-                self.after(0, lambda: self.status_label.config(text="[1/4] Scanning for subtitle streams..."))
-                streams, error = self.app_context.inspect_video_subtitles(source_path)
-                if self.cancellation_event.is_set(): return
-                if error or not streams:
-                    self.after(0, lambda: messagebox.showerror("Softsub AIO Error", error or "No image subtitle streams found."))
-                    return
+            # --- GIAI ĐOẠN 1 & 2: XỬ LÝ FILE NGUỒN ---
+            if not source_path:
+                self.after(0, lambda: messagebox.showerror("Softsub AIO Error", "No source file selected."))
+                return
 
-                # Tự động chọn stream đầu tiên
-                stream_index = streams[0]['index']
-                stream_title = streams[0].get('tags', {}).get('title', 'Untitled')
-                self.after(0, lambda: self.status_label.config(text=f"Found stream: {stream_title}. Extracting..."))
-                
-                self.after(0, lambda: self.status_label.config(text="[2/4] Extracting subtitles..."))
-                _, _, error = self.app_context.extract_subtitles_from_video(source_path, stream_index, self.update_extraction_progress, self.cancellation_event)
-                if self.cancellation_event.is_set(): return
-                if error:
-                    self.after(0, lambda: messagebox.showerror("Softsub AIO Error", f"Subtitle extraction failed: {error}"))
+            if not self.app_context.subtitles: # Only process if subtitles are not already loaded
+                if ext in ['.mkv', '.mp4', '.ts', '.wmv', '.mov', '.webm', '.avi', '.flv']:
+                    self.after(0, lambda: self.status_label.config(text="[1/4] Scanning for subtitle streams..."))
+                    streams, error = self.app_context.inspect_video_subtitles(source_path)
+                    if self.cancellation_event.is_set(): return
+                    if error or not streams:
+                        self.after(0, lambda: messagebox.showerror("Softsub AIO Error", error or "No image subtitle streams found."))
+                        return
+
+                    stream_index = streams[0]['index']
+                    stream_title = streams[0].get('tags', {}).get('title', 'Untitled')
+                    self.after(0, lambda: self.status_label.config(text=f"Found stream: {stream_title}. Extracting..."))
+                    
+                    self.after(0, lambda: self.status_label.config(text="[2/4] Extracting subtitles..."))
+                    _, _, error = self.app_context.extract_subtitles_from_video(source_path, stream_index, self.update_extraction_progress, self.cancellation_event)
+                    if self.cancellation_event.is_set(): return
+                    if error:
+                        self.after(0, lambda: messagebox.showerror("Softsub AIO Error", f"Subtitle extraction failed: {error}"))
+                        return
+                    self.after(0, lambda: self.navigate_to(0))
+                elif ext in ['.sup', '.pgs']:
+                    self.after(0, lambda: self.status_label.config(text="[1-2/4] Processing standalone subtitle file..."))
+                    subtitles, error = self.app_context.process_standalone_subtitle_file(source_path)
+                    if self.cancellation_event.is_set(): return
+                    if error:
+                        self.after(0, lambda: messagebox.showerror("Softsub AIO Error", f"Processing subtitle file failed: {error}"))
+                        return
+                    if subtitles:
+                        self.after(0, lambda: self.navigate_to(0))
+                elif ext in ['.xml', '.html']:
+                    self.after(0, lambda: self.status_label.config(text="[1-2/4] Processing timing file..."))
+                    subtitles, error = self.app_context.load_timing_file(source_path)
+                    if self.cancellation_event.is_set(): return
+                    if error:
+                        self.after(0, lambda: messagebox.showerror("Softsub AIO Error", f"Processing timing file failed: {error}"))
+                        return
+                    if subtitles:
+                        self.after(0, lambda: self.navigate_to(0))
+                else:
+                    self.after(0, lambda: messagebox.showerror("Softsub AIO Error", "Unsupported file format for Softsub AIO."))
                     return
-                self.after(0, lambda: self.navigate_to(0))
-            elif self.app_context.subtitles:
-                 logging.info("Source is a subtitle/timing file, skipping extraction.")
-                 self.after(0, lambda: self.status_label.config(text="[1-2/4] Subtitle file loaded, skipping extraction."))
             else:
-                self.after(0, lambda: messagebox.showerror("Softsub AIO Error", "No subtitles loaded to process."))
+                self.after(0, lambda: self.status_label.config(text="[1-2/4] Subtitle data already loaded, skipping extraction/processing."))
+
+            if not self.app_context.subtitles:
+                self.after(0, lambda: messagebox.showwarning("Softsub AIO Info", "No subtitles found after processing source file."))
                 return
 
             # --- GIAI ĐOẠN 3: OCR ---
