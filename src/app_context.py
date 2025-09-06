@@ -31,7 +31,7 @@ class AppContext:
         self.settings = load_settings()
         self.api_key = self.settings.get("api_key", "")
         self.model_name = self.settings.get("last_model", "")
-        self.batch_size = self.settings.get("batch_size", 120)
+        self.batch_size = self.settings.get("batch_size", 100)
         self.max_retries = self.settings.get("max_retries", 5)
         self.ocr_prompt_template = self._load_ocr_prompt_template()
         self.ocr_language = self.settings.get("ocr_language", "Auto")
@@ -227,7 +227,7 @@ class AppContext:
             logging.error(f"Could not get frame rate from video: {e}")
             self.video_frame_rate = 23.976 # Fallback
 
-        if self.current_session_dir:
+        if self.current_session_dir and self.source_file_is_from_ytdlp:
             session_dir = self.current_session_dir
             logging.info(f"Reusing existing session directory: '{os.path.basename(session_dir)}'")
         else:
@@ -265,8 +265,12 @@ class AppContext:
             logging.error(f"Could not get frame rate from video: {e}")
             self.video_frame_rate = 23.976 # Fallback
 
-        base_name = os.path.splitext(os.path.basename(video_path))[0]
-        session_dir = self._create_new_session_dir(f"HARDSUB_{base_name}")
+        if self.current_session_dir and self.source_file_is_from_ytdlp:
+            session_dir = self.current_session_dir
+            logging.info(f"Reusing existing session directory: '{os.path.basename(session_dir)}'")
+        else:
+            base_name = os.path.splitext(os.path.basename(video_path))[0]
+            session_dir = self._create_new_session_dir(f"HARDSUB_{base_name}")
         
         self.image_folder = os.path.join(session_dir, "images")
         
