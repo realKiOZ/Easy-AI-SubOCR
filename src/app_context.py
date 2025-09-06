@@ -296,6 +296,7 @@ class AppContext:
             
         logging.info(f"Processing refined results from {len(vsf_output_dirs)} VSF output folder(s)...")
         image_counter = 1
+        empty_vsf_dirs_count = 0
 
         for dir_name in vsf_output_dirs:
             dir_path = os.path.join(APP_TEMP_PATH, dir_name)
@@ -331,12 +332,15 @@ class AppContext:
                         except Exception as e:
                             logging.error(f"Failed to process VSF image file '{img_filename}': {e}")
             else:
-                logging.warning(f"No 'RGBImages' folder or no images found in '{dir_name}'.")
+                empty_vsf_dirs_count += 1
             
             try:
                 shutil.rmtree(dir_path)
             except Exception as e:
                 logging.error(f"Failed to clean up VSF output folder '{dir_name}': {e}")
+
+        if empty_vsf_dirs_count > 0:
+            logging.warning(f"{empty_vsf_dirs_count} VSF output directories did not contain any subtitle images.")
 
         if refined_subtitles:
             refined_subtitles.sort(key=lambda x: x['start_srt'])
@@ -350,7 +354,7 @@ class AppContext:
             
         logging.warning("VSF processing finished, but no new valid subtitle images were generated.")
         return self.subtitles
-
+            
     def load_session_from_folder(self, session_folder_path: str) -> tuple[list | None, str | None]:
         start_time = time.time()
         if not os.path.isdir(session_folder_path):

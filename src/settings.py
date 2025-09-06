@@ -32,8 +32,8 @@ DEFAULT_SETTINGS = {
         "use_gpu": True,
         "confidence": 0.25,
         "quality": "320px",
-        "vedges_points_line_error": 0.2,
-        "min_sum_color_diff": 200
+        "vedges_points_line_error": 0.3,
+        "min_sum_color_diff": 500
     },
     "last_failed_batches": []
 }

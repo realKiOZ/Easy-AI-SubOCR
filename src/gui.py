@@ -35,9 +35,9 @@ class SubtitlePreviewer(TkinterDnD.Tk):
     def __init__(self):
         super().__init__()
         self.title("Easy AI Subtitle OCR")
-        self.geometry("1000x1000")
-        self.minsize(1000, 1000)
-        self._center_window(1360, 1080)
+        self.geometry("1100x900")
+        self.minsize(1100, 900)
+        self._center_window(1200, 1000)
         
         self.app_context = AppContext()
         self._init_vars()
@@ -143,8 +143,8 @@ class SubtitlePreviewer(TkinterDnD.Tk):
     def _create_right_panel(self):
         right_container = ttk.Frame(self)
         right_container.grid_columnconfigure(0, weight=1)
-        right_container.grid_rowconfigure(1, weight=50) # Preview
-        right_container.grid_rowconfigure(2, weight=2) # Nav/OCR
+        right_container.grid_rowconfigure(1, weight=20, minsize=160) # Preview
+        right_container.grid_rowconfigure(2, weight=5, minsize=120) # Nav/OCR
         right_container.grid_rowconfigure(3, weight=1) # Log
 
         top_controls_frame = ttk.Frame(right_container)
@@ -167,8 +167,9 @@ class SubtitlePreviewer(TkinterDnD.Tk):
         image_container.grid_propagate(False)
         image_container.grid_rowconfigure(0, weight=1)
         image_container.grid_columnconfigure(0, weight=1)
-        self.image_label = ttk.Label(image_container, text="", anchor="center", background="gray")
-        self.image_label.grid(row=0, column=0, sticky="nsew")
+        self.image_canvas = tk.Canvas(image_container, bg="gray", highlightthickness=0)
+        self.image_canvas.grid(row=0, column=0, sticky="nsew")
+        self.image_canvas.bind("<Configure>", self.on_canvas_resize)
 
         nav_ocr_frame = ttk.Frame(right_container)
         nav_ocr_frame.grid(row=2, column=0, sticky="nsew", pady=5)
@@ -410,11 +411,11 @@ class SubtitlePreviewer(TkinterDnD.Tk):
             self._set_controls_state(tk.NORMAL)
         self.after(0, update_ui)
 
-    def navigate_to(self, index):
+    def navigate_to(self, index, target_width=None, target_height=None):
         if not self.app_context.subtitles or not (0 <= index < len(self.app_context.subtitles)):
             self.nav_label.config(text="Sub 0 / 0")
             self.time_label.config(text="00:00:00,000 --> 00:00:00,000")
-            self.image_label.config(text="No subtitles loaded", image='')
+            self.image_canvas.delete("all") # Clear canvas
             self.text_editor.delete('1.0', tk.END)
             return
         self.app_context.current_index = index
@@ -422,11 +423,27 @@ class SubtitlePreviewer(TkinterDnD.Tk):
         try:
             img_path = os.path.join(self.app_context.image_folder, sub['image_file'])
             pil_img = Image.open(img_path)
-            container = self.image_label.master
-            w, h = container.winfo_width(), container.winfo_height()
-            if w < 50 or h < 50: w, h = 800, 500
-            scale = min(w / pil_img.width, h / pil_img.height)
+            
+            self.update_idletasks() # Force update of layout to get accurate dimensions
+            
+            # Use provided target dimensions if available, otherwise fallback to canvas dimensions
+            canvas_w = target_width if target_width is not None else self.image_canvas.winfo_width()
+            canvas_h = target_height if target_height is not None else self.image_canvas.winfo_height()
+
+            if canvas_w < 50 or canvas_h < 50: 
+                canvas_w, canvas_h = 800, 500 # Fallback for initial size
+            
+            # Prioritize fitting height
+            scale = canvas_h / pil_img.height
+            
+            # If scaling by height makes it too wide, scale down further to fit width
+            if (pil_img.width * scale) > canvas_w:
+                scale = canvas_w / pil_img.width
+            
+            scale = min(scale, 1.0) # Ensure we never scale up
+
             new_size = (int(pil_img.width * scale), int(pil_img.height * scale))
+            
             try:
                 resample_filter = Image.Resampling.LANCZOS
             except AttributeError:
@@ -434,15 +451,26 @@ class SubtitlePreviewer(TkinterDnD.Tk):
 
             pil_img = pil_img.resize(new_size, resample_filter)
             tk_img = ImageTk.PhotoImage(pil_img)
-            self.image_label.config(image=tk_img, text="")
-            self.image_label.image = tk_img
+            
+            self.image_canvas.delete("all") # Clear previous image
+            # Center the image on the canvas
+            x_offset = (canvas_w - new_size[0]) / 2
+            y_offset = (canvas_h - new_size[1]) / 2
+            self.image_canvas.create_image(x_offset, y_offset, anchor=tk.NW, image=tk_img)
+            self.image_canvas.image = tk_img # Keep a reference!
         except Exception as e:
-            self.image_label.config(text=f"Error loading image:\n{sub['image_file']}", image='')
+            self.image_canvas.delete("all")
+            self.image_canvas.create_text(canvas_w / 2, canvas_h / 2, text=f"Error loading image:\n{sub['image_file']}", fill="red", anchor="center")
             logging.error(f"Error loading image {sub['image_file']}: {e}")
         self.text_editor.delete('1.0', tk.END)
         self.text_editor.insert(tk.END, sub.get('text', ''))
         self.nav_label.config(text=f"Sub {index + 1} / {len(self.app_context.subtitles)}")
         self.time_label.config(text=f"{sub['start_srt']} --> {sub['end_srt']}")
+
+    def on_canvas_resize(self, event):
+        # Re-render the current subtitle image when the canvas size changes
+        if self.app_context.subtitles and 0 <= self.app_context.current_index < len(self.app_context.subtitles):
+            self.navigate_to(self.app_context.current_index, target_width=event.width, target_height=event.height)
 
     def sync_text_from_widget(self):
         if self.app_context.subtitles and 0 <= self.app_context.current_index < len(self.app_context.subtitles):
@@ -450,11 +478,17 @@ class SubtitlePreviewer(TkinterDnD.Tk):
 
     def prev_sub(self):
         self.sync_text_from_widget()
-        if self.app_context.current_index > 0: self.navigate_to(self.app_context.current_index - 1)
+        if self.app_context.current_index > 0:
+            current_w = self.image_canvas.winfo_width()
+            current_h = self.image_canvas.winfo_height()
+            self.navigate_to(self.app_context.current_index - 1, target_width=current_w, target_height=current_h)
 
     def next_sub(self):
         self.sync_text_from_widget()
-        if self.app_context.current_index < len(self.app_context.subtitles) - 1: self.navigate_to(self.app_context.current_index + 1)
+        if self.app_context.current_index < len(self.app_context.subtitles) - 1:
+            current_w = self.image_canvas.winfo_width()
+            current_h = self.image_canvas.winfo_height()
+            self.navigate_to(self.app_context.current_index + 1, target_width=current_w, target_height=current_h)
 
     def save_srt(self):
         self.sync_text_from_widget()
@@ -479,7 +513,7 @@ class SubtitlePreviewer(TkinterDnD.Tk):
                 video_dest_path = os.path.join(os.path.dirname(srt_path), os.path.basename(video_source_path))
                 shutil.copy(video_source_path, video_dest_path)
                 logging.info(f"Copied video file to: {video_dest_path}")
-                messagebox.showinfo("Complete", f"SRT file and video saved to:\n{os.path.dirname(srt_path)}")
+                messagebox.showinfo("Complete", f"SRT file and video saved to:\n{os.opath.dirname(srt_path)}")
             else:
                 messagebox.showinfo("Complete", f"SRT file saved to:\n{srt_path}")
             self.app_context.update_settings("last_save_dir", os.path.dirname(srt_path))

@@ -308,6 +308,22 @@ def run_vsf_only_pipeline(video_path, output_image_folder, options, progress_cal
             cfg_content, 
             flags=re.MULTILINE
         )
+
+        min_sum_color_diff_val = f"{options.get('min_sum_color_diff', 300)}"
+        cfg_content = re.sub(
+            r"^(min_sum_color_diff\s*=\s*)\S+",
+            lambda m: m.group(1) + min_sum_color_diff_val,
+            cfg_content,
+            flags=re.MULTILINE
+        )
+
+        vedges_points_line_error_val = f"{options.get('vedges_points_line_error', 0.3):.2f}"
+        cfg_content = re.sub(
+            r"^(vedges_points_line_error\s*=\s*)\S+",
+            lambda m: m.group(1) + vedges_points_line_error_val,
+            cfg_content,
+            flags=re.MULTILINE
+        )
         
         safe_output_path = APP_TEMP_PATH.replace('\\', '/')
         lines = cfg_content.split('\n')
