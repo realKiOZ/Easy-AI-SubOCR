@@ -25,6 +25,25 @@ def get_available_models(api_key: str) -> tuple[list, str | None]:
         logging.error(f"Error fetching model list: {e}")
         return [], f"Invalid API Key or connection error: {e}"
 
+def validate_gemini_response(response_data, expected_count):
+    if not isinstance(response_data, list):
+        return f"Validation failed: Response is not a list, but {type(response_data).__name__}."
+    
+    if len(response_data) != expected_count:
+        return f"Validation failed: Expected {expected_count} items, but got {len(response_data)}."
+
+    for i, item in enumerate(response_data):
+        if not isinstance(item, dict):
+            return f"Validation failed: Item at index {i} is not a dictionary."
+        if 'index' not in item or 'text' not in item:
+            return f"Validation failed: Item at index {i} is missing 'index' or 'text' key."
+        if not isinstance(item['index'], int):
+            return f"Validation failed: 'index' at item {i} is not an integer."
+        if not isinstance(item['text'], str):
+            return f"Validation failed: 'text' at item {i} is not a string."
+            
+    return None
+
 def process_batch_with_gemini(batch_of_events, image_folder, log_folder, model, batch_start_index, generation_config, safety_settings, ocr_prompt):
     api_request_parts = [ocr_prompt]
     for event in batch_of_events:
@@ -36,7 +55,9 @@ def process_batch_with_gemini(batch_of_events, image_folder, log_folder, model, 
         except FileNotFoundError:
             logging.warning(f"Image file not found: '{event['image_file']}'. Skipping.")
             continue
-    if len(api_request_parts) <= 1: return None, "No images to process in batch."
+    
+    if len(api_request_parts) <= 1: 
+        return None, "No images to process in batch.", "SKIPPED"
 
     try:
         response = model.generate_content(
@@ -48,24 +69,41 @@ def process_batch_with_gemini(batch_of_events, image_folder, log_folder, model, 
         log_filename = f"batch_{batch_start_index:04d}.json"
         log_filepath = os.path.join(log_folder, log_filename)
         json_content = response.text
+        
         try:
             json_match = re.search(r"```json\s*([\s\S]*?)\s*```", response.text)
-            if json_match: json_content = json_match.group(1)
+            if json_match: 
+                json_content = json_match.group(1)
+            
             parsed_json = json.loads(json_content)
+            
+            # --- Start Validation ---
+            validation_error = validate_gemini_response(parsed_json, len(batch_of_events))
+            if validation_error:
+                logging.error(f"Batch {batch_start_index} validation failed: {validation_error}")
+                # Save raw response for debugging
+                with open(log_filepath.replace('.json', '.txt'), 'w', encoding='utf-8') as f:
+                    f.write(response.text)
+                return None, validation_error, "VALIDATION_ERROR"
+            # --- End Validation ---
+
             with open(log_filepath, 'w', encoding='utf-8') as f:
                 json.dump(parsed_json, f, indent=4, ensure_ascii=False)
-        except Exception as log_e:
-            logging.error(f"Error parsing or saving log '{log_filename}': {log_e}. Raw response saved to .txt.")
+            
+            return parsed_json, None, None
+
+        except json.JSONDecodeError as json_e:
+            logging.error(f"Error parsing JSON for batch {batch_start_index}: {json_e}. Raw response saved to .txt.")
             with open(log_filepath.replace('.json', '.txt'), 'w', encoding='utf-8') as f:
                 f.write(response.text)
-
-        json_match = re.search(r"```json\s*([\s\S]*?)\s*```", response.text)
-        if json_match:
-            return json.loads(json_match.group(1)), None
-        else:
-            return json.loads(response.text), None
+            return None, f"JSON Decode Error: {json_e}", "JSON_ERROR"
+            
     except Exception as e:
-        return None, str(e)
+        error_str = str(e)
+        error_type = "GENERAL_API_ERROR"
+        if "resource exhausted" in error_str.lower() or "userRateLimitExceeded" in error_str or "429" in error_str:
+            error_type = "RATE_LIMIT"
+        return None, error_str, error_type
 
 def run_ocr_pipeline(subtitles: list, image_folder: str, log_folder: str, api_key: str, model_name: str, generation_config: dict, safety_settings: list, batch_size: int, max_retries: int, ocr_prompt: str, cancellation_event: threading.Event, frame_rate: float, progress_callback=None, indices_to_process=None) -> tuple[list | None, str]:
     logging.info("Starting OCR process...")
@@ -91,35 +129,46 @@ def run_ocr_pipeline(subtitles: list, image_folder: str, log_folder: str, api_ke
         batch_to_process = list(compress(subtitles[i:i + batch_size], batch_mask))
         original_indices_in_batch = [idx for idx, process in enumerate(batch_mask) if process]
 
-        results, error_message = None, ""
+        results, error_message, error_type = None, "", None
         for attempt in range(max_retries):
             if cancellation_event.is_set(): return None, "Operation cancelled by user."
-            results, error_message = process_batch_with_gemini(batch_to_process, image_folder, log_folder, model, i, generation_config, safety_settings, ocr_prompt)
+            
+            results, error_message, error_type = process_batch_with_gemini(batch_to_process, image_folder, log_folder, model, i, generation_config, safety_settings, ocr_prompt)
+            
             if results is not None:
                 all_failed_indices.discard(i)
                 break
             else:
-                # Log a concise warning for the user, full details to debug
                 logging.warning(f"Batch {i} failed (attempt {attempt+1}/{max_retries}). Retrying...")
                 logging.debug(f"Full error for batch {i}: {error_message}")
-                time.sleep(2 ** attempt)
-        
-        if results is not None:
-            if isinstance(results, list):
-                for res in results:
-                    try:
-                        relative_index = res['index']
-                        text = res.get('text', '')
-                        original_relative_index = original_indices_in_batch[relative_index]
-                        absolute_index = i + original_relative_index
-                        if 0 <= absolute_index < len(subtitles):
-                            subtitles[absolute_index]['text'] = text
-                    except (TypeError, KeyError, IndexError) as e:
-                        logging.error(f"Error processing result item in batch {i}: {e}. Result: {res}")
-            else:
-                 all_failed_indices.add(i)
-        else:
+                
+                wait_time = 20 if error_type == "RATE_LIMIT" else 2 ** attempt
+                if error_type == "RATE_LIMIT":
+                    logging.info(f"Rate limit detected. Waiting for {wait_time} seconds...")
+                
+                time.sleep(wait_time)
+        else: # This block runs if the for loop completes without a `break`
+            logging.error(f"Batch {i} failed permanently after {max_retries} retries.")
             all_failed_indices.add(i)
+            # Mark subtitles in the failed batch
+            for original_relative_index in original_indices_in_batch:
+                absolute_index = i + original_relative_index
+                if 0 <= absolute_index < len(subtitles):
+                    subtitles[absolute_index]['text'] = f"[OCR FAILED - BATCH {i}]"
+            
+        if results is not None:
+            # This block runs if the batch was successful
+            for res in results:
+                try:
+                    relative_index = res['index']
+                    text = res.get('text', '')
+                    # Find the original subtitle this result corresponds to
+                    original_relative_index = original_indices_in_batch[relative_index]
+                    absolute_index = i + original_relative_index
+                    if 0 <= absolute_index < len(subtitles):
+                        subtitles[absolute_index]['text'] = text
+                except (TypeError, KeyError, IndexError) as e:
+                    logging.error(f"Error processing result item in batch {i}: {e}. Result: {res}")
 
         processed_count += len(batch_to_process)
         if progress_callback:
@@ -132,10 +181,14 @@ def run_ocr_pipeline(subtitles: list, image_folder: str, log_folder: str, api_ke
     
     if not all_failed_indices:
         initial_count = len(subtitles)
-        filtered_subtitles = [sub for sub in subtitles if sub.get('text', '').strip()]
+        # Filter out subtitles that are empty OR still have the failure message
+        filtered_subtitles = [
+            sub for sub in subtitles 
+            if sub.get('text', '').strip() and not sub.get('text', '').startswith("[OCR FAILED")
+        ]
         removed_count = initial_count - len(filtered_subtitles)
         if removed_count > 0:
-            logging.info(f"Removed {removed_count} empty subtitle entries.")
+            logging.info(f"Removed {removed_count} empty or failed subtitle entries.")
 
         if frame_rate > 0:
             logging.info("Merging identical adjacent subtitles...")

@@ -193,8 +193,13 @@ class AppContext:
                 current_ocr_prompt = self.ocr_prompt_template
         else:
             current_ocr_prompt = self.ocr_prompt_template
+
+        # Replace language placeholder in the selected prompt
         if self.ocr_language and self.ocr_language.lower() != 'auto':
-            current_ocr_prompt += f"\nImportant: The primary language of the subtitles is {self.ocr_language}."
+            language = self.ocr_language
+        else:
+            language = "the dominant language in the image" # Fallback for Auto
+        current_ocr_prompt = current_ocr_prompt.replace("{language}", language)
         
         subtitles, message = run_ocr_pipeline(self.subtitles, self.image_folder, log_folder, self.api_key, self.model_name, self.generation_config, self.safety_settings, self.batch_size, self.max_retries, current_ocr_prompt, cancellation_event, self.video_frame_rate, progress_callback, indices_to_process)
         
