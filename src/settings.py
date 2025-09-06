@@ -17,7 +17,7 @@ DEFAULT_SETTINGS = {
     "generation_config": {
         "temperature": 0.2,
         "top_k": 2,
-        "top_p": 0.5
+        "top_p": 0.2
     },
     "bdsup2sub_path": "assets/BDSup2Sub.jar",
     "safety_settings": [

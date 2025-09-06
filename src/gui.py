@@ -35,9 +35,9 @@ class SubtitlePreviewer(TkinterDnD.Tk):
     def __init__(self):
         super().__init__()
         self.title("Easy AI Subtitle OCR")
-        self.geometry("1100x900")
-        self.minsize(1100, 900)
-        self._center_window(1200, 1000)
+        self.geometry("1100x980")
+        self.minsize(1100, 980)
+        self._center_window(1260, 980)
         
         self.app_context = AppContext()
         self._init_vars()
@@ -108,9 +108,13 @@ class SubtitlePreviewer(TkinterDnD.Tk):
         style.configure("Save.TButton", font=('Arial', 11, 'bold'), padding=[0, 5], background="#cce0ff")
         style.configure("HardsubAIO.TButton", font=('Arial', 11, 'bold'), padding=[0, 5], background="#d4edda")
         style.configure("SoftsubAIO.TButton", font=('Arial', 11, 'bold'), padding=[0, 5], background="#d1ecf1")
+        style.configure("Nav.TButton", font=('Arial', 9), padding=[0, 2])
         
         style.configure("Accent.TButton", font=('Arial', 11, 'bold'), padding=[0, 5], background="#d4edda") # Green
         style.configure("Primary.TButton", font=('Arial', 11, 'bold'), padding=[0, 5], background="#d1ecf1") # Blue
+        
+        style.configure("Custom.TLabelframe.Label", foreground="darkblue", font=('Arial', 9, 'bold'))
+        style.configure("Custom.TLabelframe", bordercolor="darkgray", relief="solid")
 
     def _create_widgets(self):
         self.grid_columnconfigure(0, weight=1, minsize=380)
@@ -145,27 +149,27 @@ class SubtitlePreviewer(TkinterDnD.Tk):
     def _create_right_panel(self):
         right_container = ttk.Frame(self)
         right_container.grid_columnconfigure(0, weight=1)
-        right_container.grid_rowconfigure(1, weight=20, minsize=160) # Preview
-        right_container.grid_rowconfigure(2, weight=5, minsize=120) # Nav/OCR
-        right_container.grid_rowconfigure(3, weight=1) # Log
+        right_container.grid_rowconfigure(1, weight=10, minsize=160)  # Preview
+        right_container.grid_rowconfigure(2, weight=0)   # Nav/OCR
+        right_container.grid_rowconfigure(3, weight=1)  # Log
 
         top_controls_frame = ttk.Frame(right_container)
         top_controls_frame.grid(row=0, column=0, sticky="ew", pady=(0, 5))
         top_controls_frame.grid_columnconfigure(0, weight=1)
         top_controls_frame.grid_columnconfigure(1, minsize=300)
-        
-        adv_ocr_frame = ttk.LabelFrame(top_controls_frame, text="Advanced OCR", padding=10)
+
+        adv_ocr_frame = ttk.LabelFrame(top_controls_frame, text="Advanced OCR", padding=10, style="Custom.TLabelframe")
         adv_ocr_frame.grid(row=0, column=0, sticky="nsew", padx=(0, 5))
         adv_settings_frame = create_advanced_settings(adv_ocr_frame, self)
         adv_settings_frame.pack(fill="x", expand=True)
         ocr_controls_frame = create_ocr_controls(adv_ocr_frame, self)
-        ocr_controls_frame.pack(fill="x", expand=True, pady=(5,0))
+        ocr_controls_frame.pack(fill="x", expand=True, pady=(5, 0))
 
         save_aio_frame = self._create_save_aio_frame(top_controls_frame)
         save_aio_frame.grid(row=0, column=1, sticky="nsew", padx=(5, 0))
 
-        image_container = ttk.LabelFrame(right_container, text="Frame Preview", padding=10)
-        image_container.grid(row=1, column=0, sticky="nsew", pady=(0, 5))
+        image_container = ttk.LabelFrame(right_container, text="Frame Preview", padding=10, style="Custom.TLabelframe")
+        image_container.grid(row=1, column=0, sticky="nsew", pady=(0, 0))
         image_container.grid_propagate(False)
         image_container.grid_rowconfigure(0, weight=1)
         image_container.grid_columnconfigure(0, weight=1)
@@ -174,24 +178,24 @@ class SubtitlePreviewer(TkinterDnD.Tk):
         self.image_canvas.bind("<Configure>", self.on_canvas_resize)
 
         nav_ocr_frame = ttk.Frame(right_container)
-        nav_ocr_frame.grid(row=2, column=0, sticky="nsew", pady=5)
+        nav_ocr_frame.grid(row=2, column=0, sticky="nsew", pady=(0, 5))
         nav_ocr_frame.grid_columnconfigure(1, weight=1)
 
         nav_frame = self._create_nav_frame(nav_ocr_frame)
-        nav_frame.grid(row=0, column=0, sticky="ew", padx=(0, 5))
+        nav_frame.grid(row=0, column=0, sticky="nsew", padx=(0, 5))
 
-        ocr_result_frame = ttk.LabelFrame(nav_ocr_frame, text="OCR Result", padding=10)
+        ocr_result_frame = ttk.LabelFrame(nav_ocr_frame, text="OCR Result", padding=10, style="Custom.TLabelframe")
         ocr_result_frame.grid(row=0, column=1, sticky="nsew")
         ocr_result_frame.grid_rowconfigure(0, weight=1)
         ocr_result_frame.grid_columnconfigure(0, weight=1)
         try:
-            self.text_font = font.Font(family="Noto Sans", size=14)
+            self.text_font = font.Font(family="Noto Sans", size=13, weight="bold")
         except tk.TclError:
-            self.text_font = font.Font(family="Arial", size=14)
+            self.text_font = font.Font(family="Arial", size=13, weight="bold")
         self.text_editor = scrolledtext.ScrolledText(ocr_result_frame, wrap=tk.WORD, font=self.text_font, height=4)
         self.text_editor.grid(row=0, column=0, sticky="nsew")
 
-        log_frame = ttk.LabelFrame(right_container, text="Log", padding=5)
+        log_frame = ttk.LabelFrame(right_container, text="Log", padding=5, style="Custom.TLabelframe")
         log_frame.grid(row=3, column=0, sticky="nsew", pady=(5, 0))
         log_frame.grid_columnconfigure(0, weight=1)
         log_frame.grid_rowconfigure(0, weight=1)
@@ -208,7 +212,7 @@ class SubtitlePreviewer(TkinterDnD.Tk):
         tools_menu.add_command(label="Clear Temp Folder...", command=self.clear_temp_folder)
 
     def _create_api_config_frame(self, parent):
-        api_frame = ttk.LabelFrame(parent, text="API Key / Models", padding=10)
+        api_frame = ttk.LabelFrame(parent, text="API Key / Models", padding=10, style="Custom.TLabelframe")
         api_frame.columnconfigure(1, weight=1)
         ttk.Label(api_frame, text="Google API Key:").grid(row=0, column=0, sticky="w", pady=2)
         self.api_key_entry = ttk.Entry(api_frame, textvariable=self.api_key_var, show="*")
@@ -231,7 +235,7 @@ class SubtitlePreviewer(TkinterDnD.Tk):
         return api_frame
 
     def _create_save_aio_frame(self, parent):
-        save_frame = ttk.LabelFrame(parent, text="Save / AIO", padding=10)
+        save_frame = ttk.LabelFrame(parent, text="Save / AIO", padding=10, style="Custom.TLabelframe")
         save_frame.columnconfigure(0, weight=1)
         self.btn_save = ttk.Button(save_frame, text="Save to .SRT file", command=self.save_srt, style="Save.TButton")
         self.btn_save.grid(row=0, column=0, sticky="ew", pady=(0, 5))
@@ -242,18 +246,34 @@ class SubtitlePreviewer(TkinterDnD.Tk):
         return save_frame
 
     def _create_nav_frame(self, parent):
-        nav_frame = ttk.LabelFrame(parent, text="Navigation", padding=10)
-        nav_frame.columnconfigure(0, weight=1)
-        nav_frame.columnconfigure(1, weight=1)
-        nav_frame.columnconfigure(2, weight=1)
-        self.btn_prev = ttk.Button(nav_frame, text="<< Previous", command=self.prev_sub)
-        self.btn_prev.grid(row=0, column=0, sticky="ew", pady=2, padx=(0, 5))
+        nav_frame = ttk.LabelFrame(parent, text="Navigation", padding=10, style="Custom.TLabelframe")
+        
+        # Configure grid columns to be of equal weight for centering
+        for i in range(4):
+            nav_frame.columnconfigure(i, weight=1)
+
+        # --- Row 1: Main Navigation ---
+        self.btn_prev = ttk.Button(nav_frame, text="<< Previous", command=self.prev_sub, style="Nav.TButton")
+        self.btn_prev.grid(row=0, column=0, columnspan=1, sticky="", pady=2, padx=2)
         self.nav_label = ttk.Label(nav_frame, text="Sub 0 / 0", anchor="center")
-        self.nav_label.grid(row=0, column=1, sticky="ew", pady=5)
-        self.btn_next = ttk.Button(nav_frame, text="Next >>", command=self.next_sub)
-        self.btn_next.grid(row=0, column=2, sticky="ew", pady=2, padx=(5, 0))
+        self.nav_label.grid(row=0, column=1, columnspan=2, sticky="ew", pady=5)
+        self.btn_next = ttk.Button(nav_frame, text="Next >>", command=self.next_sub, style="Nav.TButton")
+        self.btn_next.grid(row=0, column=3, columnspan=1, sticky="", pady=2, padx=2)
+
+        # --- Row 2: Seek Controls ---
+        self.btn_seek_back_50 = ttk.Button(nav_frame, text="<< -50", command=lambda: self.seek_sub(-50), style="Nav.TButton")
+        self.btn_seek_back_50.grid(row=1, column=0, sticky="", pady=2, padx=2)
+        self.btn_seek_back_10 = ttk.Button(nav_frame, text="< -10", command=lambda: self.seek_sub(-10), style="Nav.TButton")
+        self.btn_seek_back_10.grid(row=1, column=1, sticky="", pady=2, padx=2)
+        self.btn_seek_fwd_10 = ttk.Button(nav_frame, text="+10 >", command=lambda: self.seek_sub(10), style="Nav.TButton")
+        self.btn_seek_fwd_10.grid(row=1, column=2, sticky="", pady=2, padx=2)
+        self.btn_seek_fwd_50 = ttk.Button(nav_frame, text="+50 >>", command=lambda: self.seek_sub(50), style="Nav.TButton")
+        self.btn_seek_fwd_50.grid(row=1, column=3, sticky="", pady=2, padx=2)
+
+        # --- Row 3: Timing Information ---
         self.time_label = ttk.Label(nav_frame, text="00:00:00,000 --> 00:00:00,000", anchor="center")
-        self.time_label.grid(row=1, column=0, columnspan=3, sticky="ew", pady=5)
+        self.time_label.grid(row=2, column=0, columnspan=4, sticky="ew", pady=5)
+        
         return nav_frame
 
     def _center_window(self, width, height):
@@ -487,19 +507,26 @@ class SubtitlePreviewer(TkinterDnD.Tk):
         if self.app_context.subtitles and 0 <= self.app_context.current_index < len(self.app_context.subtitles):
             self.app_context.subtitles[self.app_context.current_index]['text'] = self.text_editor.get('1.0', tk.END).strip()
 
-    def prev_sub(self):
+    def seek_sub(self, offset):
         self.sync_text_from_widget()
-        if self.app_context.current_index > 0:
+        if not self.app_context.subtitles:
+            return
+        
+        target_index = self.app_context.current_index + offset
+        
+        # Clamp the index to the valid range
+        new_index = max(0, min(target_index, len(self.app_context.subtitles) - 1))
+        
+        if new_index != self.app_context.current_index:
             current_w = self.image_canvas.winfo_width()
             current_h = self.image_canvas.winfo_height()
-            self.navigate_to(self.app_context.current_index - 1, target_width=current_w, target_height=current_h)
+            self.navigate_to(new_index, target_width=current_w, target_height=current_h)
+
+    def prev_sub(self):
+        self.seek_sub(-1)
 
     def next_sub(self):
-        self.sync_text_from_widget()
-        if self.app_context.current_index < len(self.app_context.subtitles) - 1:
-            current_w = self.image_canvas.winfo_width()
-            current_h = self.image_canvas.winfo_height()
-            self.navigate_to(self.app_context.current_index + 1, target_width=current_w, target_height=current_h)
+        self.seek_sub(1)
 
     def save_srt(self):
         self.sync_text_from_widget()
@@ -743,6 +770,10 @@ class SubtitlePreviewer(TkinterDnD.Tk):
         self.btn_retry_failed.config(state=tk.NORMAL if subtitles_loaded and has_failed else tk.DISABLED)
         self.btn_prev.config(state=tk.NORMAL if subtitles_loaded else tk.DISABLED)
         self.btn_next.config(state=tk.NORMAL if subtitles_loaded else tk.DISABLED)
+        self.btn_seek_back_10.config(state=tk.NORMAL if subtitles_loaded else tk.DISABLED)
+        self.btn_seek_back_50.config(state=tk.NORMAL if subtitles_loaded else tk.DISABLED)
+        self.btn_seek_fwd_10.config(state=tk.NORMAL if subtitles_loaded else tk.DISABLED)
+        self.btn_seek_fwd_50.config(state=tk.NORMAL if subtitles_loaded else tk.DISABLED)
         self.btn_save.config(state=tk.NORMAL if self.ocr_completed and not is_disabled else tk.DISABLED)
         hardsub_video_loaded = bool(self.app_context.hardsub_video_path) and not is_disabled
         self.btn_hardsub_aio.config(state=tk.NORMAL if hardsub_video_loaded else tk.DISABLED)

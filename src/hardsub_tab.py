@@ -7,14 +7,14 @@ def create_hardsub_tab(parent, gui_instance):
     hardsub_frame = ttk.Frame(parent, padding=10)
     
     # --- Input Frame ---
-    input_frame = ttk.LabelFrame(hardsub_frame, text="Input", padding=10)
+    input_frame = ttk.LabelFrame(hardsub_frame, text="Input", padding=10, style="Custom.TLabelframe")
     input_frame.pack(fill=tk.X, expand=False, pady=(0, 10))
     
     btn_select_hardsub_video = ttk.Button(input_frame, text="1. Select Video File", command=gui_instance.select_hardsub_video)
     btn_select_hardsub_video.pack(fill=tk.X, pady=2)
     gui_instance.btn_select_hardsub_video = btn_select_hardsub_video
 
-    ytdlp_frame = ttk.LabelFrame(input_frame, text="or Download from URL", padding=10)
+    ytdlp_frame = ttk.LabelFrame(input_frame, text="or Download from URL", padding=10, style="Custom.TLabelframe")
     ytdlp_frame.pack(fill=tk.X, expand=False, pady=(5, 0))
     ytdlp_frame.columnconfigure(0, weight=1)
 
@@ -27,7 +27,7 @@ def create_hardsub_tab(parent, gui_instance):
     gui_instance.btn_download_video = btn_download_video
 
     # --- Process Selection ---
-    process_frame = ttk.LabelFrame(hardsub_frame, text="Process Method", padding=10)
+    process_frame = ttk.LabelFrame(hardsub_frame, text="Process Method", padding=10, style="Custom.TLabelframe")
     process_frame.pack(fill=tk.X, pady=(0, 10))
     
     # Biến `hardsub_process_var` bây giờ được tạo trong gui.py
@@ -39,7 +39,7 @@ def create_hardsub_tab(parent, gui_instance):
     rb_east_vsf.pack(anchor='w')
 
     # --- Common Settings ---
-    gui_instance.common_settings_frame = ttk.LabelFrame(hardsub_frame, text="Common Settings", padding=10)
+    gui_instance.common_settings_frame = ttk.LabelFrame(hardsub_frame, text="Common Settings", padding=10, style="Custom.TLabelframe")
     gui_instance.common_settings_frame.pack(fill=tk.X, pady=(0, 10))
     gui_instance.common_settings_frame.columnconfigure(1, weight=1)
 
@@ -61,7 +61,7 @@ def create_hardsub_tab(parent, gui_instance):
     gui_instance.vsf_adv_settings_frame = create_vsf_advanced_settings_frame(settings_container, gui_instance)
     gui_instance.vsf_adv_settings_frame.pack(fill=tk.X, pady=(0, 10))
 
-    gui_instance.east_settings_frame = ttk.LabelFrame(settings_container, text="EAST Settings", padding=10)
+    gui_instance.east_settings_frame = ttk.LabelFrame(settings_container, text="EAST Settings", padding=10, style="Custom.TLabelframe")
     gui_instance.east_settings_frame.pack(fill=tk.X, pady=(0, 10))
     gui_instance.east_settings_frame.columnconfigure(1, weight=1)
 
