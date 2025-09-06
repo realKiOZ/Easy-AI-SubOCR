@@ -52,6 +52,7 @@ class AppContext:
         self.hardsub_video_path = None
         self.source_file_path = None
         self.source_file_is_from_ytdlp = False
+        self.video_frame_rate = 0.0
         self._ensure_app_temp_dir()
 
     def _ensure_app_temp_dir(self):
@@ -117,6 +118,18 @@ class AppContext:
         logging.info(f"Extracting subtitles from '{os.path.basename(video_path)}' (stream {stream_index})...")
         base_name = os.path.splitext(os.path.basename(video_path))[0]
         session_dir = self._create_new_session_dir(base_name)
+        
+        # Get frame rate
+        try:
+            import cv2
+            cap = cv2.VideoCapture(video_path)
+            self.video_frame_rate = cap.get(cv2.CAP_PROP_FPS)
+            cap.release()
+            logging.info(f"Video frame rate: {self.video_frame_rate:.3f} fps")
+        except Exception as e:
+            logging.error(f"Could not get frame rate from video: {e}")
+            self.video_frame_rate = 23.976 # Fallback
+
         image_folder, timing_file, error = extract_pgs_subtitles(video_path, stream_index, session_dir, self.bdsup2sub_path, progress_callback, cancellation_event)
         if error:
             return None, None, error
@@ -183,7 +196,7 @@ class AppContext:
         if self.ocr_language and self.ocr_language.lower() != 'auto':
             current_ocr_prompt += f"\nImportant: The primary language of the subtitles is {self.ocr_language}."
         
-        subtitles, message = run_ocr_pipeline(self.subtitles, self.image_folder, log_folder, self.api_key, self.model_name, self.generation_config, self.safety_settings, self.batch_size, self.max_retries, current_ocr_prompt, cancellation_event, progress_callback, indices_to_process)
+        subtitles, message = run_ocr_pipeline(self.subtitles, self.image_folder, log_folder, self.api_key, self.model_name, self.generation_config, self.safety_settings, self.batch_size, self.max_retries, current_ocr_prompt, cancellation_event, self.video_frame_rate, progress_callback, indices_to_process)
         
         if subtitles:
             if is_hardsub_session:
@@ -204,6 +217,16 @@ class AppContext:
         start_time = time.time()
         logging.info(f"Starting EAST+VSF hardsub analysis for: '{os.path.basename(video_path)}'")
         
+        try:
+            import cv2
+            cap = cv2.VideoCapture(video_path)
+            self.video_frame_rate = cap.get(cv2.CAP_PROP_FPS)
+            cap.release()
+            logging.info(f"Video frame rate: {self.video_frame_rate:.3f} fps")
+        except Exception as e:
+            logging.error(f"Could not get frame rate from video: {e}")
+            self.video_frame_rate = 23.976 # Fallback
+
         if self.current_session_dir:
             session_dir = self.current_session_dir
             logging.info(f"Reusing existing session directory: '{os.path.basename(session_dir)}'")
@@ -232,6 +255,16 @@ class AppContext:
         start_time = time.time()
         logging.info(f"Starting VSF-Only hardsub analysis for: '{os.path.basename(video_path)}'")
         
+        try:
+            import cv2
+            cap = cv2.VideoCapture(video_path)
+            self.video_frame_rate = cap.get(cv2.CAP_PROP_FPS)
+            cap.release()
+            logging.info(f"Video frame rate: {self.video_frame_rate:.3f} fps")
+        except Exception as e:
+            logging.error(f"Could not get frame rate from video: {e}")
+            self.video_frame_rate = 23.976 # Fallback
+
         base_name = os.path.splitext(os.path.basename(video_path))[0]
         session_dir = self._create_new_session_dir(f"HARDSUB_{base_name}")
         
@@ -271,7 +304,7 @@ class AppContext:
             channel = 'top' if ('_top_' in dir_name or 'vsf_event_top_' in dir_name) else 'bottom'
 
             if os.path.isdir(rgb_images_path) and os.listdir(rgb_images_path):
-                logging.info(f"Found {len(os.listdir(rgb_images_path))} images in '{dir_name}'.")
+                logging.debug(f"Found {len(os.listdir(rgb_images_path))} images in '{dir_name}'.")
                 for img_filename in sorted(os.listdir(rgb_images_path)):
                     if img_filename.lower().endswith(('.png', '.jpeg', '.jpg')):
                         try:

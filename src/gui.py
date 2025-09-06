@@ -92,6 +92,10 @@ class SubtitlePreviewer(TkinterDnD.Tk):
         self.vsf_moderate_threshold_scaled_display_var = tk.StringVar(value=f"{self.vsf_moderate_threshold_scaled_var.get():.2f}")
         self.vsf_image_scale_var = tk.IntVar(value=vsf_adv_settings.get("image_scale", 4))
         self.vsf_image_scale_display_var = tk.StringVar(value=f"{self.vsf_image_scale_var.get()}")
+        self.vsf_vedges_points_line_error_var = tk.DoubleVar(value=round(vsf_adv_settings.get("vedges_points_line_error", 0.2), 2))
+        self.vsf_vedges_points_line_error_display_var = tk.StringVar(value=f"{self.vsf_vedges_points_line_error_var.get():.2f}")
+        self.vsf_min_sum_color_diff_var = tk.IntVar(value=vsf_adv_settings.get("min_sum_color_diff", 200))
+        self.vsf_min_sum_color_diff_display_var = tk.StringVar(value=f"{self.vsf_min_sum_color_diff_var.get()}")
 
     def _configure_styles(self):
         style = ttk.Style(self)
@@ -318,10 +322,12 @@ class SubtitlePreviewer(TkinterDnD.Tk):
         vsf_adv_settings = {
             "moderate_threshold": round(self.vsf_moderate_threshold_var.get(), 2),
             "moderate_threshold_scaled": round(self.vsf_moderate_threshold_scaled_var.get(), 2),
-            "image_scale": self.vsf_image_scale_var.get()
+            "image_scale": self.vsf_image_scale_var.get(),
+            "vedges_points_line_error": round(self.vsf_vedges_points_line_error_var.get(), 2),
+            "min_sum_color_diff": self.vsf_min_sum_color_diff_var.get()
         }
         self.app_context.update_settings("vsf_adv_settings", vsf_adv_settings)
-        logging.info(f"VSF advanced settings saved: Moderate Threshold={vsf_adv_settings['moderate_threshold']:.2f}, Scaled Threshold={vsf_adv_settings['moderate_threshold_scaled']:.2f}, Image Scale={vsf_adv_settings['image_scale']}")
+        logging.info(f"VSF advanced settings saved: Moderate Threshold={vsf_adv_settings['moderate_threshold']:.2f}, Scaled Threshold={vsf_adv_settings['moderate_threshold_scaled']:.2f}, Image Scale={vsf_adv_settings['image_scale']}, VEdges Line Error={vsf_adv_settings['vedges_points_line_error']:.2f}, Min Sum Color Diff={vsf_adv_settings['min_sum_color_diff']}")
 
     def log_vsf_settings(self, event=None): self.after(50, self.save_vsf_settings)
 
@@ -386,7 +392,7 @@ class SubtitlePreviewer(TkinterDnD.Tk):
         self._set_controls_state(tk.NORMAL)
 
     def update_ocr_progress(self, message, percentage):
-        logging.info(f"Progress: {message} ({percentage}%)")
+        logging.debug(f"Progress: {message} ({percentage}%)")
         self.status_label.config(text=message)
         self.update_idletasks()
 
@@ -565,7 +571,13 @@ class SubtitlePreviewer(TkinterDnD.Tk):
             options = {**common_options, **east_options}
             threading.Thread(target=self.handle_hardsub_video_east, args=(video_path, options), daemon=True).start()
         else:
-            vsf_adv_options = {"moderate_threshold": self.vsf_moderate_threshold_var.get(), "moderate_threshold_scaled": self.vsf_moderate_threshold_scaled_var.get(), "image_scale": self.vsf_image_scale_var.get()}
+            vsf_adv_options = {
+                "moderate_threshold": self.vsf_moderate_threshold_var.get(),
+                "moderate_threshold_scaled": self.vsf_moderate_threshold_scaled_var.get(),
+                "image_scale": self.vsf_image_scale_var.get(),
+                "vedges_points_line_error": self.vsf_vedges_points_line_error_var.get(),
+                "min_sum_color_diff": self.vsf_min_sum_color_diff_var.get()
+            }
             options = {**common_options, **vsf_adv_options}
             threading.Thread(target=self.handle_hardsub_video_vsf_only, args=(video_path, options), daemon=True).start()
 
@@ -791,7 +803,13 @@ class SubtitlePreviewer(TkinterDnD.Tk):
                 options = {**common_options, **east_options}
                 subtitles, error, flag_file = self.app_context.process_hardsub_video_east(video_path, options, self.update_ocr_progress, self.cancellation_event)
             else:
-                vsf_adv_options = {"moderate_threshold": self.vsf_moderate_threshold_var.get(), "moderate_threshold_scaled": self.vsf_moderate_threshold_scaled_var.get(), "image_scale": self.vsf_image_scale_var.get()}
+                vsf_adv_options = {
+                    "moderate_threshold": self.vsf_moderate_threshold_var.get(),
+                    "moderate_threshold_scaled": self.vsf_moderate_threshold_scaled_var.get(),
+                    "image_scale": self.vsf_image_scale_var.get(),
+                    "vedges_points_line_error": self.vsf_vedges_points_line_error_var.get(),
+                    "min_sum_color_diff": self.vsf_min_sum_color_diff_var.get()
+                }
                 options = {**common_options, **vsf_adv_options}
                 _, error, flag_file = self.app_context.process_hardsub_video_vsf_only(video_path, options, self.update_ocr_progress, self.cancellation_event)
             if self.cancellation_event.is_set(): return

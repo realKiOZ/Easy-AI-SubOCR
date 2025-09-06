@@ -9,6 +9,7 @@ import threading
 from itertools import compress
 
 from src.settings import save_settings, load_settings
+from src.utils import merge_subtitles
 
 def get_available_models(api_key: str) -> tuple[list, str | None]:
     try:
@@ -66,7 +67,7 @@ def process_batch_with_gemini(batch_of_events, image_folder, log_folder, model, 
     except Exception as e:
         return None, str(e)
 
-def run_ocr_pipeline(subtitles: list, image_folder: str, log_folder: str, api_key: str, model_name: str, generation_config: dict, safety_settings: list, batch_size: int, max_retries: int, ocr_prompt: str, cancellation_event: threading.Event, progress_callback=None, indices_to_process=None) -> tuple[list | None, str]:
+def run_ocr_pipeline(subtitles: list, image_folder: str, log_folder: str, api_key: str, model_name: str, generation_config: dict, safety_settings: list, batch_size: int, max_retries: int, ocr_prompt: str, cancellation_event: threading.Event, frame_rate: float, progress_callback=None, indices_to_process=None) -> tuple[list | None, str]:
     logging.info("Starting OCR process...")
     try:
         genai.configure(api_key=api_key)
@@ -135,6 +136,16 @@ def run_ocr_pipeline(subtitles: list, image_folder: str, log_folder: str, api_ke
         removed_count = initial_count - len(filtered_subtitles)
         if removed_count > 0:
             logging.info(f"Removed {removed_count} empty subtitle entries.")
+
+        if frame_rate > 0:
+            logging.info("Merging identical adjacent subtitles...")
+            merged_count_before = len(filtered_subtitles)
+            filtered_subtitles = merge_subtitles(filtered_subtitles, frame_rate)
+            merged_count_after = len(filtered_subtitles)
+            if merged_count_before > merged_count_after:
+                logging.info(f"Merged {merged_count_before - merged_count_after} subtitle entries.")
+        else:
+            logging.warning("Frame rate is 0, skipping subtitle merge.")
         
         return filtered_subtitles, "OCR process completed."
     else:

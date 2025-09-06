@@ -113,3 +113,51 @@ def is_cuda_available():
     except Exception as e:
         logging.warning(f"Could not check for CUDA availability: {e}")
         return False
+
+def srt_time_to_ms(time_str):
+    """Converts SRT time format to milliseconds."""
+    parts = re.split('[:,]', time_str)
+    return int(parts[0]) * 3600000 + int(parts[1]) * 60000 + int(parts[2]) * 1000 + int(parts[3])
+
+def ms_to_srt_time(ms):
+    """Converts milliseconds to SRT time format."""
+    hours, ms = divmod(ms, 3600000)
+    minutes, ms = divmod(ms, 60000)
+    seconds, ms = divmod(ms, 1000)
+    return f"{hours:02d}:{minutes:02d}:{seconds:02d},{ms:03d}"
+
+def merge_subtitles(subtitles: list, frame_rate: float) -> list:
+    """Merges adjacent subtitles with identical text."""
+    if not subtitles:
+        return []
+
+    frame_duration_ms = 1000 / frame_rate
+    merged_subtitles = []
+    
+    # Make a copy to avoid modifying the list while iterating
+    subs_iterator = iter(subtitles)
+    
+    current_sub = next(subs_iterator, None)
+    if current_sub is None:
+        return []
+
+    for next_sub in subs_iterator:
+        # Check for identical text content
+        if current_sub['text'] == next_sub['text']:
+            current_end_ms = srt_time_to_ms(current_sub['end_srt'])
+            next_start_ms = srt_time_to_ms(next_sub['start_srt'])
+            
+            # Check if the time gap is within one frame duration
+            if 0 <= (next_start_ms - current_end_ms) <= frame_duration_ms:
+                # Merge by extending the end time of the current subtitle
+                current_sub['end_srt'] = next_sub['end_srt']
+                continue  # Skip adding the current_sub yet, as it might merge with the next one too
+
+        merged_subtitles.append(current_sub)
+        current_sub = next_sub
+    
+    # Add the last subtitle
+    if current_sub is not None:
+        merged_subtitles.append(current_sub)
+
+    return merged_subtitles

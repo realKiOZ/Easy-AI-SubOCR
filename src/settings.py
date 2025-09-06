@@ -31,7 +31,9 @@ DEFAULT_SETTINGS = {
         "scan_area_height": 25,
         "use_gpu": True,
         "confidence": 0.25,
-        "quality": "320px"
+        "quality": "320px",
+        "vedges_points_line_error": 0.2,
+        "min_sum_color_diff": 200
     },
     "last_failed_batches": []
 }
