@@ -11,6 +11,7 @@ import threading
 import re
 import yt_dlp
 import time
+import cv2 # Added for image processing
 
 from src.settings import load_settings, save_settings, TEMP_DIR_NAME, APP_TEMP_PATH
 from src.video_processor import inspect_video_subtitles, extract_pgs_subtitles, convert_sup_to_xml_and_images
@@ -58,6 +59,24 @@ class AppContext:
 
     def _ensure_app_temp_dir(self):
         os.makedirs(TEMP_DIR_NAME, exist_ok=True)
+
+    def _process_image_for_ocr(self, image_path: str, processing_options: dict):
+        try:
+            image = cv2.imread(image_path)
+            if image is None:
+                logging.warning(f"Could not read image for processing: {image_path}")
+                return False
+
+            # Grayscale
+            if processing_options.get("enable_grayscale", False):
+                image = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+                logging.debug(f"Applied grayscale to {os.path.basename(image_path)}")
+
+            cv2.imwrite(image_path, image)
+            return True
+        except Exception as e:
+            logging.error(f"Error processing image '{image_path}': {e}")
+            return False
 
     def _create_new_session_dir(self, base_name: str) -> str:
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -275,7 +294,7 @@ class AppContext:
         self.image_folder = os.path.join(session_dir, "images")
         
         run_id = uuid.uuid4().hex
-        subtitles, error, flag_file = run_hardsub_pipeline(video_path, self.image_folder, options, run_id, progress_callback, cancellation_event)
+        subtitles, error, flag_file = run_hardsub_pipeline(video_path, self.image_folder, options, run_id, self, progress_callback, cancellation_event)
 
         if error:
             logging.error(f"EAST+VSF pipeline failed: {error}")
@@ -364,8 +383,15 @@ class AppContext:
                             end_sec = vsf_time_to_seconds(end_time_str)
                             
                             new_image_filename = f"hardsub_refined_{image_counter:05d}{original_ext}"
-                            shutil.copy(os.path.join(rgb_images_path, img_filename), os.path.join(self.image_folder, new_image_filename))
+                            temp_image_path = os.path.join(self.image_folder, new_image_filename)
+                            shutil.copy(os.path.join(rgb_images_path, img_filename), temp_image_path)
                             
+                            # Apply image processing filters
+                            processing_options = self.settings.get("hardsub_image_processing", {})
+                            if any(processing_options.values()): # Only process if any option is enabled
+                                logging.debug(f"Applying image processing to {new_image_filename}")
+                                self._process_image_for_ocr(temp_image_path, processing_options)
+
                             refined_subtitles.append({
                                 "start_srt": seconds_to_srt_time(start_sec), 
                                 "end_srt": seconds_to_srt_time(end_sec), 

@@ -35,6 +35,9 @@ DEFAULT_SETTINGS = {
         "vedges_points_line_error": 0.3,
         "min_sum_color_diff": 300
     },
+    "hardsub_image_processing": {
+        "enable_grayscale": True,
+    },
     "last_failed_batches": []
 }
 

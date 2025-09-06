@@ -83,7 +83,7 @@ def process_subtitle_channel(has_text, current_event, frame_time_sec, all_events
         current_event["end_time"] = None
         current_event["end_frame"] = None
 
-def run_hardsub_pipeline(video_path, output_image_folder, options, run_id, progress_callback=None, cancellation_event=None):
+def run_hardsub_pipeline(video_path, output_image_folder, options, run_id, app_context, progress_callback=None, cancellation_event=None):
     start_time = time.time()
     if not os.path.exists(video_path): return None, "Video file not found.", None
     if not os.path.exists(EAST_MODEL_PATH): return None, "EAST text detection model not found.", None
@@ -169,7 +169,15 @@ def run_hardsub_pipeline(video_path, output_image_folder, options, run_id, progr
                 scan_area_h = int(height * scan_area_height_percent)
                 crop_img = frame[0:scan_area_h, :] if channel == "top" else frame[height - scan_area_h:height, :]
                 image_filename = f"hardsub_tmp_{len(east_subtitles):05d}.png"
-                cv2.imwrite(os.path.join(output_image_folder, image_filename), crop_img)
+                image_path = os.path.join(output_image_folder, image_filename)
+                cv2.imwrite(image_path, crop_img)
+
+                # Apply image processing filters if VSF CLI is not found
+                processing_options = app_context.settings.get("hardsub_image_processing", {})
+                if any(processing_options.values()): # Only process if any option is enabled
+                    logging.debug(f"Applying image processing to {image_filename} (EAST-only path)")
+                    app_context._process_image_for_ocr(image_path, processing_options)
+
                 east_subtitles.append({"start_srt": seconds_to_srt_time(event["start_time"]), "end_srt": seconds_to_srt_time(event["end_time"]), "image_file": image_filename, "channel": channel})
         cap.release()
         return east_subtitles, "VSF CLI executable not found.", None
