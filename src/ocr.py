@@ -41,6 +41,13 @@ def validate_gemini_response(response_data, expected_count):
             return f"Validation failed: 'index' at item {i} is not an integer."
         if not isinstance(item['text'], str):
             return f"Validation failed: 'text' at item {i} is not a string."
+    
+    # Validate indices are unique and sequential
+    received_indices = sorted([item['index'] for item in response_data])
+    expected_indices = list(range(expected_count))
+
+    if received_indices != expected_indices:
+        return f"Validation failed: Received indices {received_indices} do not match expected sequential indices {expected_indices}."
             
     return None
 

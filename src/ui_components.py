@@ -123,7 +123,10 @@ def create_advanced_settings(parent, gui_instance):
     adv_frame.columnconfigure(3, weight=1)
     
     ttk.Label(adv_frame, text="Batch Size:").grid(row=0, column=0, sticky="w", pady=2)
-    ttk.Spinbox(adv_frame, from_=1, to=500, textvariable=gui_instance.batch_size_var, command=gui_instance.save_advanced_settings, wrap=True, width=5).grid(row=0, column=1, sticky="w", padx=5, pady=(5,0))
+    batch_size_spinbox = ttk.Spinbox(adv_frame, from_=1, to=500, textvariable=gui_instance.batch_size_var, command=gui_instance.save_advanced_settings, wrap=True, width=5)
+    batch_size_spinbox.grid(row=0, column=1, sticky="w", padx=5, pady=(5,0))
+    batch_size_spinbox.bind("<FocusOut>", gui_instance.save_advanced_settings)
+    batch_size_spinbox.bind("<Return>", gui_instance.save_advanced_settings)
     
     ttk.Label(adv_frame, text="OCR Language:").grid(row=0, column=2, sticky="w", pady=(5,0), padx=(10,0))
     ocr_lang_combobox = ttk.Combobox(adv_frame, textvariable=gui_instance.ocr_lang_var, width=12)

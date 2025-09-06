@@ -35,7 +35,7 @@ def create_hardsub_tab(parent, gui_instance):
     rb_vsf_only = ttk.Radiobutton(process_frame, text="VSF Only (CPU, but fast)", variable=gui_instance.hardsub_process_var, value="vsf_only", command=gui_instance.toggle_hardsub_settings)
     rb_vsf_only.pack(anchor='w')
     
-    rb_east_vsf = ttk.Radiobutton(process_frame, text="EAST + VSF (GPU, more accurately)", variable=gui_instance.hardsub_process_var, value="east_vsf", command=gui_instance.toggle_hardsub_settings)
+    rb_east_vsf = ttk.Radiobutton(process_frame, text="EAST + VSF Refine (GPU)", variable=gui_instance.hardsub_process_var, value="east_vsf", command=gui_instance.toggle_hardsub_settings)
     rb_east_vsf.pack(anchor='w')
 
     # --- Common Settings ---
