@@ -103,6 +103,9 @@ def process_batch_with_gemini(batch_of_events_with_indices, image_folder, log_fo
             json_match = re.search(r"```json\s*([\s\S]*?)\s*```", response.text)
             if json_match: 
                 json_content = json_match.group(1)
+
+            # Clean up potential comments added by the model before parsing
+            json_content = re.sub(r"//.*", "", json_content)
             
             parsed_json = json.loads(json_content)
             
@@ -170,13 +173,28 @@ def ocr_worker(
 
             if results is not None:
                 logging.info(f"OCR Worker-{worker_id} successfully processed batch {batch_start_index} on attempt {attempt + 1}.")
-                # Pair results with their original absolute indices
+                
+                # Create a filtered list of valid events to ensure correct index mapping,
+                # mirroring the logic in process_batch_with_gemini.
+                valid_batch_with_indices = []
+                for item in batch_with_indices:
+                    event = item[1] # item is a tuple (absolute_index, event_dict)
+                    image_path = os.path.join(image_folder, event['image_file'])
+                    ext = os.path.splitext(image_path)[1].lower()
+                    if ext in ['.jpg', '.jpeg', '.png', '.webp'] and os.path.exists(image_path):
+                        valid_batch_with_indices.append(item)
+
+                # Pair results with their original absolute indices using the valid list
                 for res in results:
                     try:
-                        # The index from Gemini (0, 1, 2...) corresponds to the order in batch_with_indices
-                        original_absolute_index = batch_with_indices[res['index']][0]
-                        text = res.get('text', '')
-                        results_queue.put((original_absolute_index, text))
+                        # The index from Gemini (0, 1, 2...) corresponds to the order in valid_batch_with_indices
+                        result_index = res['index']
+                        if result_index < len(valid_batch_with_indices):
+                            original_absolute_index = valid_batch_with_indices[result_index][0]
+                            text = res.get('text', '')
+                            results_queue.put((original_absolute_index, text))
+                        else:
+                            logging.error(f"OCR Worker-{worker_id} received an out-of-bounds index {result_index} for a batch of size {len(valid_batch_with_indices)}.")
                     except (IndexError, KeyError) as e:
                         logging.error(f"OCR Worker-{worker_id} encountered an error matching result to index for batch {batch_start_index}: {e}")
                 batch_results = results

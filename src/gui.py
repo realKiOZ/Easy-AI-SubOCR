@@ -584,9 +584,11 @@ class SubtitlePreviewer(TkinterDnD.Tk):
         self.status_label.config(text="Ready.")
         self._set_controls_state(tk.NORMAL)
 
-    def load_session(self):
-        sessions = self.app_context.get_session_list()
-        if not sessions: messagebox.showinfo("Info", "No saved sessions found."); return
+    def load_session(self, session_type='softsub'):
+        sessions = self.app_context.get_session_list(session_type=session_type)
+        if not sessions: 
+            messagebox.showinfo("Info", f"No saved {session_type} sessions found.")
+            return
         dialog = SessionSelectionDialog(self, sessions)
         self.wait_window(dialog)
         if dialog.selected_session:

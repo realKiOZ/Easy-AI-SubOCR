@@ -234,25 +234,30 @@ class AppContext:
 
         log_folder = os.path.join(self.current_session_dir, "logs")
         os.makedirs(log_folder, exist_ok=True)
-        is_hardsub_session = self.subtitles and 'channel' in self.subtitles[0]
-        if is_hardsub_session:
-            try:
-                with open(resource_path("assets/prompt_hardsub.txt"), "r", encoding="utf-8") as f:
-                    current_ocr_prompt = f.read()
-                logging.info("Using dedicated hardsub OCR prompt.")
-            except Exception as e:
-                logging.error(f"Could not load hardsub prompt: {e}. Falling back to default.")
-                current_ocr_prompt = self.ocr_prompt_template
-        else:
-            current_ocr_prompt = self.ocr_prompt_template
-
-        # Determine language for the prompt
-        if self.ocr_language and self.ocr_language.lower() != 'auto':
-            language = self.ocr_language
-        else:
-            language = "the dominant language in the image" # Fallback for Auto
         
-        subtitles, message = run_ocr_pipeline(
+        is_hardsub_session = self.subtitles and 'channel' in self.subtitles[0]
+        
+        try:
+            prompt_filename = "assets/prompt_hardsub.txt" if is_hardsub_session else "assets/prompt.txt"
+            with open(resource_path(prompt_filename), "r", encoding="utf-8") as f:
+                current_ocr_prompt = f.read()
+            if is_hardsub_session: logging.info("Using dedicated hardsub OCR prompt.")
+        except Exception as e:
+            logging.error(f"Could not load prompt '{prompt_filename}': {e}. Falling back to default.")
+            current_ocr_prompt = self.ocr_prompt_template
+            
+        language = self.ocr_language if self.ocr_language and self.ocr_language.lower() != 'auto' else "the dominant language in the image"
+
+        # Ensure subtitles are sorted chronologically before processing
+        self.subtitles.sort(key=lambda x: x['start_srt'])
+        
+        logging.info(f"--- Starting OCR for {len(self.subtitles)} subtitles in chronological order ---")
+
+        settings = load_settings()
+        settings['last_failed_batches'] = []
+        save_settings(settings)
+
+        processed_subs, message = run_ocr_pipeline(
             subtitles=self.subtitles, 
             image_folder=self.image_folder, 
             log_folder=log_folder, 
@@ -262,28 +267,37 @@ class AppContext:
             safety_settings=self.safety_settings, 
             batch_size=self.batch_size, 
             ocr_prompt=current_ocr_prompt, 
-            language=language,  # Pass language separately
+            language=language,
             cancellation_event=cancellation_event, 
             frame_rate=self.video_frame_rate, 
             progress_callback=progress_callback, 
             indices_to_process=indices_to_process
         )
-        
-        if subtitles is not None:
-            logging.info(f"[DEBUG] app_context.py: Received {len(subtitles)} subtitles from ocr.py.")
-            if is_hardsub_session:
-                logging.info("Post-processing hardsub results...")
-                for sub in subtitles:
-                    if sub.get('channel') == 'top' and sub.get('text'):
-                        sub['text'] = f"{{\\an8}}{sub.get('text', '')}"
-                subtitles.sort(key=lambda x: x['start_srt'])
-                logging.info("Hardsub results sorted by start time.")
 
-            self.subtitles = subtitles
-            logging.info(f"OCR process completed in {time.time() - start_time:.2f} seconds.")
-            return subtitles, message
-            
-        return None, message
+        if cancellation_event.is_set():
+            return None, "OCR process cancelled by user."
+
+        if processed_subs is None:
+            logging.error(f"OCR pipeline failed: {message}")
+            return None, message
+
+        # Post-processing to add alignment tags for hardsubs
+        if is_hardsub_session:
+            logging.info("Post-processing hardsub results...")
+            for sub in processed_subs:
+                if sub.get('channel') == 'top' and sub.get('text'):
+                    sub['text'] = f"{{\\an8}}{sub.get('text', '')}"
+        
+        self.subtitles = processed_subs
+        
+        logging.info(f"OCR process completed for all channels in {time.time() - start_time:.2f} seconds.")
+        
+        final_message = "OCR process completed."
+        settings = load_settings()
+        if settings.get('last_failed_batches'):
+            final_message += " Some batches failed."
+        
+        return self.subtitles, final_message
         
     def process_hardsub_video_east(self, video_path: str, options: dict, progress_callback=None, cancellation_event=None) -> tuple[list | None, str | None, str | None]:
         start_time = time.time()
@@ -362,82 +376,98 @@ class AppContext:
     def merge_vsf_results(self, run_id: str) -> list | None:
         start_time = time.time()
         if not self.current_session_dir:
+            logging.error("merge_vsf_results called without an active session directory.")
             return None
-        
-        refined_subtitles = []
-        
+
         vsf_output_dirs = [d for d in os.listdir(APP_TEMP_PATH) if d.startswith((f'vsf_event_{run_id}', f'vsf_run_{run_id}'))]
-        
         if not vsf_output_dirs:
             logging.warning("No VSF output directories found for merging.")
             return self.subtitles
-            
-        logging.info(f"Processing refined results from {len(vsf_output_dirs)} VSF output folder(s)...")
-        image_counter = 1
-        empty_vsf_dirs_count = 0
+
+        # Step 1: Collect all image data from all directories into a single list
+        all_images_data = []
+        logging.info(f"Collecting images from {len(vsf_output_dirs)} VSF output folder(s)...")
 
         for dir_name in vsf_output_dirs:
             dir_path = os.path.join(APP_TEMP_PATH, dir_name)
             rgb_images_path = os.path.join(dir_path, 'RGBImages')
-            
             channel = 'top' if ('_top_' in dir_name or 'vsf_event_top_' in dir_name) else 'bottom'
 
-            if os.path.isdir(rgb_images_path) and os.listdir(rgb_images_path):
-                logging.debug(f"Found {len(os.listdir(rgb_images_path))} images in '{dir_name}'.")
-                for img_filename in sorted(os.listdir(rgb_images_path)):
-                    if img_filename.lower().endswith(('.png', '.jpeg', '.jpg')):
-                        try:
-                            base_name, original_ext = os.path.splitext(img_filename)
-                            time_parts = base_name.split('__')
-                            start_time_str = time_parts[0]
-                            end_time_match = re.match(r'(\d+_\d+_\d+_\d+)', time_parts[1])
-                            if not end_time_match: continue
-                            end_time_str = end_time_match.group(1)
-                            
-                            start_sec = vsf_time_to_seconds(start_time_str)
-                            end_sec = vsf_time_to_seconds(end_time_str)
-                            
-                            new_image_filename = f"hardsub_refined_{image_counter:05d}{original_ext}"
-                            temp_image_path = os.path.join(self.image_folder, new_image_filename)
-                            shutil.copy(os.path.join(rgb_images_path, img_filename), temp_image_path)
-                            
-                            # Apply image processing filters
-                            processing_options = self.settings.get("hardsub_image_processing", {})
-                            if any(processing_options.values()): # Only process if any option is enabled
-                                logging.debug(f"Applying image processing to {new_image_filename}")
-                                self._process_image_for_ocr(temp_image_path, processing_options)
+            if not os.path.isdir(rgb_images_path) or not os.listdir(rgb_images_path):
+                continue
 
-                            refined_subtitles.append({
-                                "start_srt": seconds_to_srt_time(start_sec), 
-                                "end_srt": seconds_to_srt_time(end_sec), 
-                                "image_file": new_image_filename, 
-                                "channel": channel
-                            })
-                            image_counter += 1
-                        except Exception as e:
-                            logging.error(f"Failed to process VSF image file '{img_filename}': {e}")
-            else:
-                empty_vsf_dirs_count += 1
+            for img_filename in os.listdir(rgb_images_path):
+                if img_filename.lower().endswith(('.png', '.jpeg', '.jpg')):
+                    try:
+                        base_name, _ = os.path.splitext(img_filename)
+                        time_parts = base_name.split('__')
+                        start_time_str = time_parts[0]
+                        end_time_match = re.match(r'(\d+_\d+_\d+_\d+)', time_parts[1])
+                        if not end_time_match:
+                            continue
+                        end_time_str = end_time_match.group(1)
+                        
+                        start_sec = vsf_time_to_seconds(start_time_str)
+                        
+                        all_images_data.append({
+                            "start_sec": start_sec,
+                            "end_sec": vsf_time_to_seconds(end_time_str),
+                            "original_path": os.path.join(rgb_images_path, img_filename),
+                            "original_ext": os.path.splitext(img_filename)[1],
+                            "channel": channel
+                        })
+                    except Exception as e:
+                        logging.error(f"Failed to parse VSF image file '{img_filename}': {e}")
+
+        # Step 2: Sort the collected data once by start time
+        if not all_images_data:
+            logging.warning("VSF processing finished, but no valid subtitle images were found.")
+            # Clean up empty directories
+            for dir_name in vsf_output_dirs:
+                try: shutil.rmtree(os.path.join(APP_TEMP_PATH, dir_name))
+                except Exception: pass
+            return self.subtitles
+
+        logging.info(f"Collected {len(all_images_data)} total images. Sorting chronologically...")
+        all_images_data.sort(key=lambda x: x['start_sec'])
+
+        # Step 3: Process the sorted list to create the final subtitle objects
+        refined_subtitles = []
+        processing_options = self.settings.get("hardsub_image_processing", {})
+        
+        for i, data in enumerate(all_images_data):
+            image_counter = i + 1
+            new_image_filename = f"hardsub_refined_{image_counter:05d}{data['original_ext']}"
+            temp_image_path = os.path.join(self.image_folder, new_image_filename)
             
             try:
-                shutil.rmtree(dir_path)
+                shutil.copy(data['original_path'], temp_image_path)
+                
+                if any(processing_options.values()):
+                    self._process_image_for_ocr(temp_image_path, processing_options)
+
+                refined_subtitles.append({
+                    "start_srt": seconds_to_srt_time(data["start_sec"]), 
+                    "end_srt": seconds_to_srt_time(data["end_sec"]), 
+                    "image_file": new_image_filename, 
+                    "channel": data["channel"]
+                })
+            except Exception as e:
+                logging.error(f"Failed to copy or process image '{data['original_path']}': {e}")
+
+        # Step 4: Clean up temporary VSF directories
+        for dir_name in vsf_output_dirs:
+            try:
+                shutil.rmtree(os.path.join(APP_TEMP_PATH, dir_name))
             except Exception as e:
                 logging.error(f"Failed to clean up VSF output folder '{dir_name}': {e}")
 
-        if empty_vsf_dirs_count > 0:
-            logging.warning(f"{empty_vsf_dirs_count} VSF output directories did not contain any subtitle images.")
-
-        if refined_subtitles:
-            refined_subtitles.sort(key=lambda x: x['start_srt'])
-            self.subtitles = refined_subtitles
-            
-            self.timing_file_path = os.path.join(self.current_session_dir, "hardsub_log_refined.json")
-            with open(self.timing_file_path, 'w', encoding='utf-8') as f:
-                json.dump(self.subtitles, f, indent=2)
-            logging.info(f"Merged {len(self.subtitles)} subtitles in {time.time() - start_time:.2f} seconds.")
-            return self.subtitles
-            
-        logging.warning("VSF processing finished, but no new valid subtitle images were generated.")
+        # Finalize
+        self.subtitles = refined_subtitles
+        self.timing_file_path = os.path.join(self.current_session_dir, "hardsub_log_refined.json")
+        with open(self.timing_file_path, 'w', encoding='utf-8') as f:
+            json.dump(self.subtitles, f, indent=2)
+        logging.info(f"Merged {len(self.subtitles)} subtitles correctly in {time.time() - start_time:.2f} seconds.")
         return self.subtitles
             
     def load_session_from_folder(self, session_folder_path: str) -> tuple[list | None, str | None]:
@@ -451,12 +481,48 @@ class AppContext:
         os.makedirs(self.image_folder, exist_ok=True)
         os.makedirs(log_folder, exist_ok=True)
         timing_file = None
-        for f in sorted(os.listdir(session_folder_path), reverse=True):
-            if f.lower().endswith(('.xml', '.html', '.json')):
-                timing_file = os.path.join(session_folder_path, f)
-                if 'refined' in f: break
+        
+        # Define search paths in order of priority
+        potential_paths = [
+            session_folder_path,
+            self.image_folder 
+        ]
+
+        # --- Search Strategy ---
+        # 1. Look for the most specific/final file first: 'refined.json'
+        # 2. Then, look for standard softsub timing files: .xml, .html
+        # 3. Finally, as a fallback, look for any .json file (like a temp hardsub log)
+
+        for path in potential_paths:
+            if not os.path.isdir(path): continue
+            files = sorted(os.listdir(path), reverse=True)
+            for f in files:
+                if 'refined' in f.lower() and f.lower().endswith('.json'):
+                    timing_file = os.path.join(path, f)
+                    break
+            if timing_file: break
+        
         if not timing_file:
-            return None, "No timing file found in this session."
+            for path in potential_paths:
+                if not os.path.isdir(path): continue
+                files = sorted(os.listdir(path), reverse=True)
+                for f in files:
+                    if f.lower().endswith(('.xml', '.html')):
+                        timing_file = os.path.join(path, f)
+                        break
+                if timing_file: break
+
+        if not timing_file:
+            # As a last resort, check only the root for any json
+            if os.path.isdir(session_folder_path):
+                files = sorted(os.listdir(session_folder_path), reverse=True)
+                for f in files:
+                    if f.lower().endswith('.json'):
+                        timing_file = os.path.join(session_folder_path, f)
+                        break
+
+        if not timing_file:
+            return None, "No timing file (.xml, .html, .json) found in session folder or its 'images' subfolder."
         self.timing_file_path = timing_file
         if timing_file.lower().endswith(".json"):
             with open(timing_file, 'r', encoding='utf-8') as f: subtitles = json.load(f)
@@ -488,11 +554,20 @@ class AppContext:
             logging.info(f"Session loaded in {time.time() - start_time:.2f} seconds.")
             return self.subtitles, "Session loaded."
 
-    def get_session_list(self) -> list[str]:
+    def get_session_list(self, session_type='all') -> list[str]:
         if not os.path.isdir(TEMP_DIR_NAME):
             return []
-        sessions = [d for d in os.listdir(TEMP_DIR_NAME) if os.path.isdir(os.path.join(TEMP_DIR_NAME, d))]
-        return sorted(sessions, reverse=True)
+        
+        all_sessions = [d for d in os.listdir(TEMP_DIR_NAME) if os.path.isdir(os.path.join(TEMP_DIR_NAME, d))]
+        
+        if session_type == 'hardsub':
+            filtered_sessions = [s for s in all_sessions if s.startswith('HARDSUB_')]
+        elif session_type == 'softsub':
+            filtered_sessions = [s for s in all_sessions if not s.startswith('HARDSUB_')]
+        else:
+            filtered_sessions = all_sessions
+            
+        return sorted(filtered_sessions, reverse=True)
 
     def _load_ocr_prompt_template(self) -> str:
         prompt_path = resource_path("assets/prompt.txt")

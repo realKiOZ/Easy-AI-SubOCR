@@ -9,10 +9,20 @@ def create_hardsub_tab(parent, gui_instance):
     # --- Input Frame ---
     input_frame = ttk.LabelFrame(hardsub_frame, text="Input", padding=10, style="Custom.TLabelframe")
     input_frame.pack(fill=tk.X, expand=False, pady=(0, 10))
+
+    # Create a sub-frame for the buttons to sit side-by-side
+    button_sub_frame = ttk.Frame(input_frame)
+    button_sub_frame.pack(fill=tk.X, expand=True)
+    button_sub_frame.columnconfigure(0, weight=1)
+    button_sub_frame.columnconfigure(1, weight=1)
     
-    btn_select_hardsub_video = ttk.Button(input_frame, text="1. Select Video File", command=gui_instance.select_hardsub_video)
-    btn_select_hardsub_video.pack(fill=tk.X, pady=2)
+    btn_select_hardsub_video = ttk.Button(button_sub_frame, text="1. Select Video File", command=gui_instance.select_hardsub_video)
+    btn_select_hardsub_video.grid(row=0, column=0, sticky="ew", padx=(0, 2), pady=2)
     gui_instance.btn_select_hardsub_video = btn_select_hardsub_video
+
+    btn_load_session_hardsub = ttk.Button(button_sub_frame, text="Load Previous Session...", command=lambda: gui_instance.load_session(session_type='hardsub'))
+    btn_load_session_hardsub.grid(row=0, column=1, sticky="ew", padx=(2, 0), pady=2)
+    gui_instance.btn_load_session_hardsub = btn_load_session_hardsub
 
     ytdlp_frame = ttk.LabelFrame(input_frame, text="or Download from URL", padding=10, style="Custom.TLabelframe")
     ytdlp_frame.pack(fill=tk.X, expand=False, pady=(5, 0))

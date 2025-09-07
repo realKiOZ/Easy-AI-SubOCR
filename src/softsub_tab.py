@@ -19,7 +19,7 @@ def create_softsub_tab(parent, gui_instance):
     btn_load_session = ttk.Button(
         control_frame, 
         text="Load Session...", 
-        command=gui_instance.load_session
+        command=lambda: gui_instance.load_session(session_type='softsub')
     )
     btn_load_session.pack(fill=tk.X, pady=2)
     gui_instance.btn_load_session = btn_load_session
