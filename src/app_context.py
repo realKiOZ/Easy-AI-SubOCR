@@ -429,7 +429,7 @@ class AppContext:
             return self.subtitles
 
         logging.info(f"Collected {len(all_images_data)} total images. Sorting chronologically...")
-        all_images_data.sort(key=lambda x: x['start_sec'])
+        all_images_data.sort(key=lambda x: (x['start_sec'], x['channel']))
 
         # Step 3: Process the sorted list to create the final subtitle objects
         refined_subtitles = []
